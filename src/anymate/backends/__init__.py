@@ -29,3 +29,6 @@ register_backend(PythonReplBackend)
 
 from .shell import ShellBackend
 register_backend(ShellBackend)
+
+from .codex import CodexBackend
+register_backend(CodexBackend)
