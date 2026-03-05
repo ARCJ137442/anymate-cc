@@ -3,7 +3,6 @@
 Validates: team setup → spawn teammate → inbox relay → REPL eval/exec → reply delivery.
 """
 import asyncio
-import json
 import shutil
 import sys
 import tempfile
@@ -17,6 +16,24 @@ from anymate.protocol.messaging import ensure_inbox, append_message, now_iso
 from anymate.protocol.fileops import atomic_write_json, locked_read_json
 from anymate.backends import get_backend
 from anymate.bridge import MessageBridge
+
+
+async def wait_for_reply(paths, team_name: str, sender: str, expected: str, timeout_s: float = 6.0) -> str:
+    attempts = int(timeout_s / 0.2)
+    for _ in range(attempts):
+        await asyncio.sleep(0.2)
+        inbox_data = locked_read_json(
+            paths.inbox_path(team_name, "team-lead"),
+            paths.inboxes_lock_path(team_name),
+        )
+        if not inbox_data:
+            continue
+        for msg in inbox_data:
+            if msg.get("from") == sender and not msg.get("text", "").startswith("{"):
+                text = msg.get("text", "")
+                assert expected in text, f"Expected {expected!r} in reply, got: {text!r}"
+                return text
+    raise AssertionError(f"Timed out waiting for reply from {sender!r} containing {expected!r}")
 
 
 async def main():
@@ -86,25 +103,8 @@ async def main():
     print("[    ] Step 3: Sent '1+1' to py-repl inbox")
 
     # ── Step 4: Wait for bridge poll → REPL eval → reply ─────────────
-    reply_found = False
-    for attempt in range(30):  # up to ~6 seconds
-        await asyncio.sleep(0.2)
-        inbox_data = locked_read_json(
-            paths.inbox_path(team_name, "team-lead"),
-            paths.inboxes_lock_path(team_name),
-        )
-        if inbox_data:
-            # Look for a reply from py-repl (not idle notification)
-            for msg in inbox_data:
-                if msg.get("from") == "py-repl" and not msg.get("text", "").startswith("{"):
-                    assert "2" in msg["text"], f"Expected '2' in reply, got: {msg['text']!r}"
-                    reply_found = True
-                    print(f"[PASS] Steps 3-5: eval path — sent '1+1', got reply: {msg['text']!r}")
-                    break
-        if reply_found:
-            break
-
-    assert reply_found, "Timed out waiting for reply to '1+1'"
+    reply = await wait_for_reply(paths, team_name, "py-repl", "2")
+    print(f"[PASS] Steps 3-5: eval path — sent '1+1', got reply: {reply!r}")
 
     # ── Step 6: Test exec path — send "print('hello')" ───────────────
     # Clear team-lead inbox for clean check
@@ -118,29 +118,54 @@ async def main():
     })
     print("[    ] Step 6: Sent \"print('hello')\" to py-repl inbox")
 
-    reply_found = False
-    for attempt in range(30):
-        await asyncio.sleep(0.2)
-        inbox_data = locked_read_json(
-            paths.inbox_path(team_name, "team-lead"),
-            paths.inboxes_lock_path(team_name),
-        )
-        if inbox_data:
-            for msg in inbox_data:
-                if msg.get("from") == "py-repl" and not msg.get("text", "").startswith("{"):
-                    assert "hello" in msg["text"], f"Expected 'hello' in reply, got: {msg['text']!r}"
-                    reply_found = True
-                    print(f"[PASS] Step 6: exec path — sent \"print('hello')\", got reply: {msg['text']!r}")
-                    break
-        if reply_found:
-            break
+    reply = await wait_for_reply(paths, team_name, "py-repl", "hello")
+    print(f"[PASS] Step 6: exec path — sent \"print('hello')\", got reply: {reply!r}")
 
-    assert reply_found, "Timed out waiting for reply to print('hello')"
+    # ── Step 7: Spawn stdio teammate (silence-timeout mode) ──────────
+    await bridge.unregister("py-repl")
+    assert not session.is_alive, "python-repl session should be stopped after unregister"
 
-    # ── Step 7: Cleanup ───────────────────────────────────────────────
+    stdio_backend = get_backend("stdio")
+    assert stdio_backend is not None, "stdio backend not found"
+    assert stdio_backend.is_available(), "stdio backend should always be available"
+
+    stdio_name = "stdio-echo"
+    stdio_session = stdio_backend.create_session(
+        name=stdio_name,
+        team_name=team_name,
+        prompt="",
+        cwd=str(tmpdir),
+        command=[
+            "python3",
+            "-u",
+            "-c",
+            "import sys\nfor line in sys.stdin:\n    print(line.rstrip('\\n'), flush=True)",
+        ],
+        silence_timeout=0.5,
+        on_output=bridge._make_output_handler(stdio_name, color="orange"),
+    )
+    ensure_inbox(paths, team_name, stdio_name)
+    await stdio_session.start()
+    assert stdio_session.is_alive, "stdio session should be alive after start"
+    await bridge.register(stdio_name, stdio_session)
+    print("[PASS] Step 7: stdio echo teammate spawned")
+
+    atomic_write_json(paths.inbox_path(team_name, "team-lead"), [])
+    append_message(paths, team_name, stdio_name, {
+        "from": "team-lead",
+        "text": "stdio ping",
+        "timestamp": now_iso(),
+        "read": False,
+    })
+    print("[    ] Step 8: Sent 'stdio ping' to stdio echo inbox")
+
+    reply = await wait_for_reply(paths, team_name, stdio_name, "stdio ping", timeout_s=8.0)
+    print(f"[PASS] Step 8: stdio silence-timeout path — got reply: {reply!r}")
+
+    # ── Step 9: Cleanup ───────────────────────────────────────────────
     await bridge.stop()
-    assert not session.is_alive, "Session should be stopped after bridge.stop()"
-    print("[PASS] Step 7: Bridge stopped, session cleaned up")
+    assert not stdio_session.is_alive, "Session should be stopped after bridge.stop()"
+    print("[PASS] Step 9: Bridge stopped, sessions cleaned up")
 
     # Verify config.json is intact
     final_config = locked_read_json(

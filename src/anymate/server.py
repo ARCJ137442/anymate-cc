@@ -223,9 +223,18 @@ def _get_or_create_bridge(team_name: str) -> MessageBridge:
         "properties": {
             "team_name": {"type": "string", "description": "Name of the existing Claude Code team to join"},
             "name": {"type": "string", "description": "Name for the new teammate (e.g. 'py-repl')"},
-            "backend_type": {"type": "string", "default": "python-repl", "description": "Backend type"},
+            "backend_type": {"type": "string", "default": "stdio", "description": "Backend type"},
+            "command": {
+                "description": "Command for stdio backend (required when backend_type='stdio')",
+                "oneOf": [
+                    {"type": "string"},
+                    {"type": "array", "items": {"type": "string"}},
+                ],
+            },
             "cwd": {"type": "string", "default": ".", "description": "Working directory for subprocess"},
             "prompt": {"type": "string", "default": "", "description": "Initial prompt/context"},
+            "silence_timeout": {"type": "number", "default": 5.0, "description": "Flush output after N seconds of silence"},
+            "prompt_pattern": {"type": "string", "description": "Optional regex prompt terminator pattern"},
         },
         "required": ["team_name", "name"],
     },
@@ -233,9 +242,12 @@ def _get_or_create_bridge(team_name: str) -> MessageBridge:
 async def spawn_teammate(
     team_name: str,
     name: str,
-    backend_type: str = "python-repl",
+    backend_type: str = "stdio",
+    command: str | list[str] | None = None,
     cwd: str = ".",
     prompt: str = "",
+    silence_timeout: float = 5.0,
+    prompt_pattern: str | None = None,
 ) -> dict:
     assert _paths is not None and _config is not None
 
@@ -246,6 +258,15 @@ async def spawn_teammate(
     backend = get_backend(backend_type)
     if backend is None:
         return {"error": f"Backend '{backend_type}' not available. Available: {list(discover_backends().keys())}"}
+    if backend_type == "stdio" and command is None:
+        return {"error": "Parameter 'command' is required when backend_type='stdio'"}
+    if backend_type == "stdio":
+        if isinstance(command, str) and not command.strip():
+            return {"error": "Parameter 'command' cannot be empty when backend_type='stdio'"}
+        if isinstance(command, list) and not command:
+            return {"error": "Parameter 'command' cannot be empty when backend_type='stdio'"}
+        if silence_timeout <= 0:
+            return {"error": "Parameter 'silence_timeout' must be > 0"}
 
     existing_count = len(config.get("members", []))
     color = COLOR_PALETTE[existing_count % len(COLOR_PALETTE)]
@@ -277,7 +298,14 @@ async def spawn_teammate(
     bridge = _get_or_create_bridge(team_name)
     on_output = bridge._make_output_handler(name, color=color)
     session = backend.create_session(
-        name=name, team_name=team_name, prompt=prompt, cwd=cwd, on_output=on_output,
+        name=name,
+        team_name=team_name,
+        prompt=prompt,
+        cwd=cwd,
+        on_output=on_output,
+        command=command,
+        silence_timeout=silence_timeout,
+        prompt_pattern=prompt_pattern,
     )
 
     await session.start()

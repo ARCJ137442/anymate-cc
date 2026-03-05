@@ -118,21 +118,66 @@ print(f"✓ Step 10: Lead inbox now has {len(lead_messages)} message(s):")
 for msg in lead_messages:
     print(f"  [{msg.get('from','?')}]: {msg.get('text','')[:200]}")
 
-# Step 11: List teammates
+# Step 11: Spawn stdio teammate (silence-timeout mode)
+resp = send_rpc("tools/call", {
+    "name": "spawn_teammate",
+    "arguments": {
+        "team_name": TEAM_NAME,
+        "name": "stdio-echo",
+        "backend_type": "stdio",
+        "command": [
+            "python3",
+            "-u",
+            "-c",
+            "import sys\nfor line in sys.stdin:\n    print(line.rstrip('\\n'), flush=True)",
+        ],
+        "silence_timeout": 0.5,
+    },
+}, 4)
+stdio_spawn_text = resp["result"]["content"][0]["text"]
+print(f"✓ Step 11: spawn stdio teammate → {stdio_spawn_text}")
+
+stdio_inbox = os.path.join(team_dir, "inboxes/stdio-echo.json")
+assert os.path.exists(stdio_inbox), "stdio-echo inbox not created!"
+
+message3 = {"from": "team-lead", "to": "stdio-echo", "text": "stdio ping", "timestamp": time.time(), "read": False}
+with open(stdio_inbox) as f:
+    inbox = json.load(f)
+inbox.append(message3)
+with open(stdio_inbox, "w") as f:
+    json.dump(inbox, f, indent=2)
+print("✓ Step 12: Sent 'stdio ping' to stdio-echo")
+
+time.sleep(6)
+with open(lead_inbox) as f:
+    lead_messages = json.load(f)
+assert any(m.get("from") == "stdio-echo" and "stdio ping" in m.get("text", "") for m in lead_messages), (
+    "Expected stdio-echo reply containing 'stdio ping'"
+)
+print("✓ Step 13: stdio-echo reply observed")
+
+# Step 14: List teammates
 resp = send_rpc("tools/call", {
     "name": "list_teammates",
     "arguments": {"team_name": TEAM_NAME}
-}, 4)
+}, 5)
 list_text = resp["result"]["content"][0]["text"]
-print(f"✓ Step 11: list_teammates → {list_text}")
+print(f"✓ Step 14: list_teammates → {list_text}")
 
-# Step 12: Stop teammate
+# Step 15: Stop teammates
 resp = send_rpc("tools/call", {
     "name": "stop_teammate",
     "arguments": {"team_name": TEAM_NAME, "name": "py-calc"}
-}, 5)
+}, 6)
 stop_text = resp["result"]["content"][0]["text"]
-print(f"✓ Step 12: stop_teammate → {stop_text}")
+print(f"✓ Step 15a: stop_teammate py-calc → {stop_text}")
+
+resp = send_rpc("tools/call", {
+    "name": "stop_teammate",
+    "arguments": {"team_name": TEAM_NAME, "name": "stdio-echo"}
+}, 7)
+stop_stdio_text = resp["result"]["content"][0]["text"]
+print(f"✓ Step 15b: stop_teammate stdio-echo → {stop_stdio_text}")
 
 # Cleanup
 proc.stdin.close()

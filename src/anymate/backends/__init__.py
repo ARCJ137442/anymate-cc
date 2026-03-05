@@ -21,6 +21,9 @@ def discover_backends() -> dict[str, Backend]:
     return available
 
 # Auto-register built-in backends
+from .stdio import StdioBackend
+register_backend(StdioBackend)
+
 from .python_repl import PythonReplBackend
 register_backend(PythonReplBackend)
 
