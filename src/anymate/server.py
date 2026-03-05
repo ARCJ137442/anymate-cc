@@ -235,6 +235,7 @@ def _get_or_create_bridge(team_name: str) -> MessageBridge:
             "prompt": {"type": "string", "default": "", "description": "Initial prompt/context"},
             "silence_timeout": {"type": "number", "default": 5.0, "description": "Flush output after N seconds of silence"},
             "prompt_pattern": {"type": "string", "description": "Optional regex prompt terminator pattern"},
+            "max_chunk_size": {"type": "integer", "default": 4096, "description": "Split output into chunks of N chars. 0 or null to disable chunking."},
         },
         "required": ["team_name", "name"],
     },
@@ -248,6 +249,7 @@ async def spawn_teammate(
     prompt: str = "",
     silence_timeout: float = 5.0,
     prompt_pattern: str | None = None,
+    max_chunk_size: int | None = 4096,
 ) -> dict:
     assert _paths is not None and _config is not None
 
@@ -296,7 +298,8 @@ async def spawn_teammate(
     ensure_inbox(_paths, team_name, name)
 
     bridge = _get_or_create_bridge(team_name)
-    on_output = bridge._make_output_handler(name, color=color)
+    on_output = bridge._make_output_handler(name, color=color,
+                                               max_chunk_size=max_chunk_size or None)
     session = backend.create_session(
         name=name,
         team_name=team_name,

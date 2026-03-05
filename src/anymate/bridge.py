@@ -7,6 +7,24 @@ from .backends.base import BridgeSession
 
 logger = logging.getLogger(__name__)
 
+
+def _split_chunks(text: str, size: int) -> list[str]:
+    """Split text into chunks, breaking at newlines when possible."""
+    if len(text) <= size:
+        return [text]
+    chunks: list[str] = []
+    while text:
+        if len(text) <= size:
+            chunks.append(text)
+            break
+        # Try to break at the last newline within the chunk
+        cut = text.rfind("\n", 0, size)
+        if cut <= 0:
+            cut = size  # No good newline break; hard cut
+        chunks.append(text[:cut])
+        text = text[cut:].lstrip("\n")
+    return chunks
+
 class MessageBridge:
     """Monitors inbox files for external teammates and relays messages."""
 
@@ -70,13 +88,25 @@ class MessageBridge:
             await asyncio.sleep(self._poll_interval)
         logger.info("Monitor loop ended for %s", agent_name)
 
-    def _make_output_handler(self, agent_name: str, color: str | None = None):
-        """Create an on_output callback that writes replies to sender's inbox."""
+    def _make_output_handler(self, agent_name: str, color: str | None = None,
+                             max_chunk_size: int | None = 4096):
+        """Create an on_output callback that writes replies to sender's inbox.
+
+        Args:
+            max_chunk_size: Split output into chunks of this many characters.
+                            None or 0 disables chunking (deliver as-is).
+        """
         def on_output(text: str, reply_to: str) -> None:
             try:
-                send_reply(self._paths, self._team_name, agent_name, reply_to, text, color=color)
+                chunks = _split_chunks(text, max_chunk_size) if max_chunk_size else [text]
+                total = len(chunks)
+                for i, chunk in enumerate(chunks, 1):
+                    label = f"[{i}/{total}] " if total > 1 else ""
+                    send_reply(self._paths, self._team_name, agent_name, reply_to,
+                               f"{label}{chunk}", color=color)
                 send_idle_notification(self._paths, self._team_name, agent_name, reply_to)
-                logger.info("Sent reply from %s to %s: %s", agent_name, reply_to, text[:80])
+                logger.info("Sent reply from %s to %s (%d chunk(s), %d chars)",
+                            agent_name, reply_to, total, len(text))
             except Exception as e:
                 logger.error("Failed to send reply from %s: %s", agent_name, e)
         return on_output
