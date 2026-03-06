@@ -68,9 +68,25 @@ def _resolve_python_binary(explicit: str | None = None) -> str:
     return "python"
 
 
+def _resolve_codex_binary(explicit: str | None = None) -> str:
+    """Resolve codex binary path cross-platform (Windows/Linux/macOS)."""
+    if explicit:
+        return explicit
+    # Check environment variable
+    env_codex = os.environ.get("ANYMATE_CODEX")
+    if env_codex:
+        return env_codex
+    # Use shutil.which() which handles platform-specific extensions (.cmd, .bat on Windows)
+    found = shutil.which("codex")
+    if found:
+        return found
+    # Fallback to plain "codex"
+    return "codex"
+
+
 class CodexBackend(Backend):
-    def __init__(self, codex_binary: str = "codex", python_binary: str | None = None):
-        self._codex = codex_binary
+    def __init__(self, codex_binary: str | None = None, python_binary: str | None = None):
+        self._codex = _resolve_codex_binary(codex_binary)
         self._python = _resolve_python_binary(python_binary)
 
     @property
