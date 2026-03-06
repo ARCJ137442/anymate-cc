@@ -199,7 +199,10 @@ class StdioBackend(Backend):
             raise ValueError("Stdio backend requires 'command'")
 
         if isinstance(command, str):
-            parsed = shlex.split(command)
+            # Use posix=False to preserve backslashes on Windows (e.g., C:\path\to\file.exe)
+            # This prevents shlex from treating backslashes as escape sequences
+            import sys
+            parsed = shlex.split(command, posix=(sys.platform != "win32"))
         else:
             parsed = list(command)
 

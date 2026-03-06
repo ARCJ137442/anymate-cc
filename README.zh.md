@@ -1,8 +1,10 @@
 # AnyMate-CC
 
-将外部程序注入 Claude Code Agent Teams，使其成为团队成员。
+**跨平台 MCP 服务器，将外部程序注入 Claude Code Agent Teams。**
 
-AnyMate-CC 是一个 [MCP](https://modelcontextprotocol.io/) 服务器，能够启动持久化的子进程后端（Python REPL、Shell 等），并将它们作为 Claude Code 多智能体系统中的正式队友接入。消息通过 Claude Code 原生的文件信箱协议传递，无需额外的通信通道。
+AnyMate-CC 是一个 [MCP](https://modelcontextprotocol.io/) 服务器，能够启动持久化的子进程后端（Python REPL、Shell、Codex AI、自定义程序），并将它们作为 Claude Code 多智能体系统中的正式队友接入。消息通过 Claude Code 原生的文件信箱协议传递，无需额外的通信通道。
+
+**平台支持：** Windows (Cygwin/MSYS2)、Linux、macOS、Termux
 
 ## 工作原理
 
@@ -41,19 +43,39 @@ AnyMate-CC 借助 Claude Code 现有的团队基础设施运作：
 
 ## 安装
 
-需要 Python 3.12+。唯一的运行时依赖是 `filelock`。
+**环境要求：** Python 3.11+（跨平台：Windows/Linux/macOS/Termux）
+
+唯一的运行时依赖是 `filelock`。
 
 ```bash
 # 从源码安装
 pip install -e .
 
-# 或者直接设置 PYTHONPATH
-export PYTHONPATH=/path/to/anymate-cc/src
+# 或安装开发依赖（包含 pytest）
+pip install -e ".[dev]"
 ```
 
 ### MCP 配置
 
-添加到项目级 `.mcp.json` 或全局配置 `~/.claude/claude_code_config.json`：
+**推荐方式（跨平台）：** 使用项目自带的启动器脚本
+
+添加到 `.claude/mcp.json`（项目级）或 `~/.config/claude/mcp.json`（全局）：
+
+```json
+{
+  "mcpServers": {
+    "anymate": {
+      "command": "python",
+      "args": ["mcp-launcher.py"],
+      "cwd": "${workspaceFolder}",
+      "env": {}
+    }
+  }
+}
+```
+
+<details>
+<summary>备选方式：直接调用模块</summary>
 
 ```json
 {
@@ -68,6 +90,11 @@ export PYTHONPATH=/path/to/anymate-cc/src
   }
 }
 ```
+
+**注意：** Linux/macOS 上可能需要使用 `python3` 而非 `python`。
+</details>
+
+详见 `.claude/MCP_CONFIG.md` 中的平台特定配置模板和故障排除指南。
 
 ## 使用方式
 
