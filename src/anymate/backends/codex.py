@@ -32,7 +32,7 @@ while True:
     cmd = [CODEX_BIN, "exec", "--json", "--skip-git-repo-check"] + EXTRA_ARGS + [prompt]
     try:
         proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=600, cwd=CWD,
+            cmd, capture_output=True, text=True, cwd=CWD,
         )
         # Parse JSONL, collect agent_message items
         messages = []
@@ -47,8 +47,6 @@ while True:
                     messages.append(item.get("text", ""))
 
         output = messages[-1] if messages else proc.stderr.strip() or "(no output)"
-    except subprocess.TimeoutExpired:
-        output = "(codex timed out after 600s)"
     except Exception as e:
         output = f"(codex error: {{e}})"
 
