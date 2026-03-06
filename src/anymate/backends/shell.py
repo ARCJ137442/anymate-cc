@@ -55,7 +55,7 @@ class ShellSession(BridgeSession):
                 )
                 if not raw:
                     break
-                line = raw.decode("utf-8", errors="replace").rstrip("\n")
+                line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
                 if line == self._sentinel:
                     output = "\n".join(buffer).strip()
                     buffer.clear()
