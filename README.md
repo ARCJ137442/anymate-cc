@@ -1,8 +1,10 @@
 # AnyMate-CC
 
-Inject external programs as teammates into Claude Code Agent Teams.
+**Cross-platform MCP server for injecting external programs as teammates into Claude Code Agent Teams.**
 
-AnyMate-CC is an [MCP](https://modelcontextprotocol.io/) server that lets you spawn persistent subprocess backends (Python REPL, shell, etc.) and expose them as first-class teammates in Claude Code's multi-agent system. Messages flow through Claude Code's file-based inbox protocol — no custom transport needed.
+AnyMate-CC is an [MCP](https://modelcontextprotocol.io/) server that lets you spawn persistent subprocess backends (Python REPL, shell, Codex AI, custom programs) and expose them as first-class teammates in Claude Code's multi-agent system. Messages flow through Claude Code's file-based inbox protocol — no custom transport needed.
+
+**Platform Support:** Windows (Cygwin/MSYS2), Linux, macOS, Termux
 
 ## How It Works
 
@@ -41,19 +43,39 @@ Backends are pluggable — implement `Backend` and `BridgeSession` from `anymate
 
 ## Installation
 
-Requires Python 3.12+. The only runtime dependency is `filelock`.
+**Requirements:** Python 3.11+ (cross-platform: Windows/Linux/macOS/Termux)
+
+The only runtime dependency is `filelock`.
 
 ```bash
 # From source
 pip install -e .
 
-# Or just set PYTHONPATH
-export PYTHONPATH=/path/to/anymate-cc/src
+# Or with dev dependencies (includes pytest)
+pip install -e ".[dev]"
 ```
 
 ### MCP Configuration
 
-Add to your `.mcp.json` (project-level) or `~/.claude/claude_code_config.json` (global):
+**Recommended (Cross-Platform):** Use the included launcher script
+
+Add to `.claude/mcp.json` (project-level) or `~/.config/claude/mcp.json` (global):
+
+```json
+{
+  "mcpServers": {
+    "anymate": {
+      "command": "python",
+      "args": ["mcp-launcher.py"],
+      "cwd": "${workspaceFolder}",
+      "env": {}
+    }
+  }
+}
+```
+
+<details>
+<summary>Alternative: Direct module invocation</summary>
 
 ```json
 {
@@ -68,6 +90,11 @@ Add to your `.mcp.json` (project-level) or `~/.claude/claude_code_config.json` (
   }
 }
 ```
+
+**Note:** On Linux/macOS, you may need to use `python3` instead of `python`.
+</details>
+
+See `.claude/MCP_CONFIG.md` for platform-specific configuration templates and troubleshooting.
 
 ## Usage
 
@@ -128,6 +155,7 @@ Environment variables (all optional):
 | `ANYMATE_CLAUDE_DIR` | `~/.claude` | Base directory for Claude Code teams/inboxes |
 | `ANYMATE_POLL_INTERVAL` | `1.0` | Inbox polling interval in seconds |
 | `ANYMATE_PYTHON` | current Python executable | Python binary for python-repl/codex wrapper launchers |
+| `ANYMATE_CODEX` | auto-detected via `which codex` | Codex CLI binary path (for codex backend) |
 
 ## Project Structure
 
@@ -163,6 +191,22 @@ pytest
 - **File-based IPC** — Reuses Claude Code's native inbox JSON files instead of inventing a new transport. This means teammates "just work" with Claude Code's existing `SendMessage` / message delivery.
 - **Sentinel protocol** — Each backend uses a unique random sentinel string to delimit output boundaries, enabling reliable capture of multi-line output without special escaping.
 - **Pluggable backends** — Adding a new backend (e.g., Node.js REPL, R session) requires implementing two classes: `Backend` (factory) and `BridgeSession` (lifecycle + I/O).
+- **Cross-platform** — Tested on Windows (Cygwin/MSYS2), Linux, macOS, and Termux. Path resolution, subprocess management, and file locking work consistently across platforms.
+
+## Testing & Validation
+
+All backends have been integration-tested on Windows (Cygwin/MSYS2):
+
+- ✅ **Python REPL**: Persistent Python sessions with state preservation
+- ✅ **Shell**: Bash command execution via Cygwin/MSYS2
+- ✅ **Stdio**: Custom command wrapping and I/O handling
+- ✅ **Codex**: AI-powered coding assistant (requires [Codex CLI](https://openai.com/blog/codex))
+- ✅ **Parallel teammates**: Multiple backends running simultaneously with correct message routing
+
+Run the test suite:
+```bash
+pytest  # 8 tests passing
+```
 
 ## License
 
