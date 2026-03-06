@@ -230,6 +230,9 @@ def _get_or_create_bridge(team_name: str) -> MessageBridge:
             "silence_timeout": {"type": "number", "default": 5.0, "description": "Flush output after N seconds of silence"},
             "prompt_pattern": {"type": "string", "description": "Optional regex prompt terminator pattern"},
             "max_chunk_size": {"type": "integer", "default": 4096, "description": "Split output into chunks of N chars. 0 or null to disable chunking."},
+            "model": {"type": "string", "description": "Model to use (codex backend only, e.g. 'gpt-5.3-codex')"},
+            "sandbox": {"type": "string", "default": "danger-full-access", "description": "Sandbox mode for codex backend"},
+            "full_auto": {"type": "boolean", "default": True, "description": "Enable full-auto mode for codex backend"},
         },
         "required": ["team_name", "name"],
     },
@@ -244,6 +247,9 @@ async def spawn_teammate(
     silence_timeout: float = 5.0,
     prompt_pattern: str | None = None,
     max_chunk_size: int | None = 4096,
+    model: str | None = None,
+    sandbox: str = "danger-full-access",
+    full_auto: bool = True,
 ) -> dict:
     assert _paths is not None and _config is not None
 
@@ -324,6 +330,9 @@ async def spawn_teammate(
             silence_timeout=silence_timeout,
             prompt_pattern=prompt_pattern,
             pane_logger=pane_logger,
+            model=model,
+            sandbox=sandbox,
+            full_auto=full_auto,
         )
         await session.start()
         await bridge.register(name, session)
