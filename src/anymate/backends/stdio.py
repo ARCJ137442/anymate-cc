@@ -76,7 +76,7 @@ class StdioSession(BridgeSession):
             if not raw:
                 break
 
-            line = raw.decode("utf-8", errors="replace").rstrip("\n")
+            line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
             if line == self._sentinel:
                 self._emit_buffer(default_when_empty=True)
                 self._status = BackendStatus.IDLE
@@ -104,7 +104,7 @@ class StdioSession(BridgeSession):
             if not raw:
                 break
 
-            line = raw.decode("utf-8", errors="replace").rstrip("\n")
+            line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
             self._buffer.append(line)
             if self._prompt_re and self._prompt_re.search(line):
                 self._emit_buffer(default_when_empty=False)

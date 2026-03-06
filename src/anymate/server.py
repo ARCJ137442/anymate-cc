@@ -147,16 +147,9 @@ class McpStdioServer:
         if self._on_startup:
             await self._on_startup()
 
-        loop = asyncio.get_running_loop()
-        reader = asyncio.StreamReader()
-        await loop.connect_read_pipe(
-            lambda: asyncio.StreamReaderProtocol(reader),
-            sys.stdin.buffer,
-        )
-
         try:
             while True:
-                raw = await reader.readline()
+                raw = await asyncio.to_thread(sys.stdin.buffer.readline)
                 if not raw:
                     break  # EOF
                 line = raw.decode("utf-8", errors="replace").strip()

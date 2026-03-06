@@ -1,5 +1,7 @@
 """Python REPL backend preset for AnyMate-CC."""
+import os
 import shutil
+import sys
 
 from .base import Backend, BackendCapabilities
 from .stdio import StdioSession, make_sentinel
@@ -35,9 +37,22 @@ while True:
 '''
 
 
+def _resolve_python_binary(explicit: str | None = None) -> str:
+    if explicit:
+        return explicit
+    env_python = os.environ.get("ANYMATE_PYTHON")
+    if env_python:
+        return env_python
+    if sys.executable:
+        return sys.executable
+    if shutil.which("python3"):
+        return "python3"
+    return "python"
+
+
 class PythonReplBackend(Backend):
-    def __init__(self, python_binary: str = "python3"):
-        self._python = python_binary
+    def __init__(self, python_binary: str | None = None):
+        self._python = _resolve_python_binary(python_binary)
 
     @property
     def name(self) -> str:
@@ -53,7 +68,7 @@ class PythonReplBackend(Backend):
         )
 
     def is_available(self) -> bool:
-        return shutil.which(self._python) is not None
+        return shutil.which(self._python) is not None or os.path.isfile(self._python)
 
     def create_session(self, name, team_name, prompt, cwd, *, on_output=None, **kwargs):
         sentinel = make_sentinel()
