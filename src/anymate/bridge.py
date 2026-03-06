@@ -24,7 +24,10 @@ def _split_chunks(text: str, size: int) -> list[str]:
         if cut <= 0:
             cut = size  # No good newline break; hard cut
         chunks.append(text[:cut])
-        text = text[cut:].lstrip("\n")
+        if cut < len(text) and text[cut] == "\n":
+            text = text[cut + 1 :]
+        else:
+            text = text[cut:]
     return chunks
 
 class MessageBridge:

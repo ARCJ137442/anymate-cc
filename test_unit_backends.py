@@ -41,3 +41,8 @@ def test_split_chunks_rejects_non_positive_size() -> None:
         _split_chunks("abc", 0)
     with pytest.raises(ValueError):
         _split_chunks("abc", -1)
+
+
+def test_split_chunks_preserves_blank_lines_after_newline_split() -> None:
+    chunks = _split_chunks("aa\n\nbb", 3)
+    assert chunks == ["aa", "\nbb"]
