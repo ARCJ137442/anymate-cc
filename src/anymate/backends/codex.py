@@ -118,12 +118,14 @@ class CodexBackend(Backend):
         model = kwargs.get("model")
         if model:
             extra_args.extend(["-m", model])
-        sandbox = kwargs.get("sandbox", "danger-full-access")
+        # Security: Default sandbox to None (use codex's own default, typically requires approval)
+        # Users must explicitly opt-in to danger-full-access via spawn_teammate parameters
+        sandbox = kwargs.get("sandbox")
         if sandbox:
             extra_args.extend(["-s", sandbox])
-        # codex exec uses --full-auto or --dangerously-bypass-approvals-and-sandbox
-        # instead of -a (which is interactive-only)
-        if kwargs.get("full_auto", True):
+        # Security: Default full_auto to False (require user approval)
+        # Users must explicitly opt-in to full_auto via spawn_teammate parameters
+        if kwargs.get("full_auto", False):
             extra_args.append("--full-auto")
 
         wrapper_code = _CODEX_WRAPPER.format(

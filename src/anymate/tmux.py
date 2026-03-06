@@ -17,6 +17,31 @@ _TMUX_COLORS = {
 }
 
 
+def _get_secure_log_dir() -> Path:
+    """Get or create a secure directory for tmux logs.
+
+    Returns a private directory with restrictive permissions (0o700 on Unix).
+    Falls back to temp directory if private directory cannot be created.
+    """
+    # Try to use ~/.anymate/logs (or ANYMATE_CLAUDE_DIR if set)
+    if "ANYMATE_CLAUDE_DIR" in os.environ:
+        base_dir = Path(os.environ["ANYMATE_CLAUDE_DIR"])
+    else:
+        base_dir = Path.home() / ".anymate"
+
+    log_dir = base_dir / "logs"
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        # Set restrictive permissions (owner-only read/write/execute)
+        # Note: chmod works on Unix; Windows uses filesystem ACLs
+        if os.name != "nt":
+            log_dir.chmod(0o700)
+        return log_dir
+    except (OSError, PermissionError) as e:
+        logger.warning("Cannot create secure log directory %s: %s. Falling back to temp.", log_dir, e)
+        return Path(tempfile.gettempdir())
+
+
 def is_tmux_available() -> bool:
     """Check if we're inside a tmux session and tmux binary exists."""
     return shutil.which("tmux") is not None and "TMUX" in os.environ
@@ -91,16 +116,35 @@ def _set_pane_border_color(pane_id: str, color: str) -> None:
 
 
 class PaneLogger:
-    """Writes formatted I/O log entries to a file for tmux pane display."""
+    """Writes formatted I/O log entries to a file for tmux pane display.
+
+    Security: Logs are stored in a private directory with restrictive permissions.
+    Set ANYMATE_DISABLE_LOGGING=1 environment variable to disable logging entirely.
+    """
 
     def __init__(self, log_file: Path, name: str):
         self._log_file = log_file
         self._name = name
         self._file = None
+        self._logging_disabled = os.environ.get("ANYMATE_DISABLE_LOGGING") == "1"
 
     def open(self) -> None:
+        if self._logging_disabled:
+            logger.info("Logging disabled for %s (ANYMATE_DISABLE_LOGGING=1)", self._name)
+            return
+
         self._log_file.parent.mkdir(parents=True, exist_ok=True)
-        self._file = open(self._log_file, "a", encoding="utf-8")
+
+        # Create log file with restrictive permissions (owner-only read/write)
+        # Note: os.open with mode flag works on Unix; Windows uses ACLs instead
+        if os.name == "nt":
+            # Windows: Use standard open (permissions handled by filesystem ACLs)
+            self._file = open(self._log_file, "a", encoding="utf-8")
+        else:
+            # Unix: Use os.open with explicit mode for restrictive permissions
+            fd = os.open(self._log_file, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            self._file = os.fdopen(fd, "a", encoding="utf-8")
+
         ts = datetime.now().strftime("%H:%M:%S")
         self._write(f"{'=' * 50}")
         self._write(f"  AnyMate: {self._name}")
@@ -113,11 +157,15 @@ class PaneLogger:
             self._file = None
 
     def log_input(self, text: str, from_agent: str) -> None:
+        if self._logging_disabled:
+            return
         ts = datetime.now().strftime("%H:%M:%S")
         self._write(f"\n[{ts}] <<< FROM {from_agent} >>>")
         self._write(text)
 
     def log_output(self, text: str, to_agent: str) -> None:
+        if self._logging_disabled:
+            return
         ts = datetime.now().strftime("%H:%M:%S")
         self._write(f"\n[{ts}] >>> TO {to_agent} >>>")
         self._write(text)
@@ -129,4 +177,10 @@ class PaneLogger:
 
     @staticmethod
     def log_path(name: str, team_name: str) -> Path:
-        return Path(tempfile.gettempdir()) / f"anymate-{team_name}-{name}.log"
+        """Get the log file path for a teammate.
+
+        Security: Logs are stored in a private directory (~/.anymate/logs) with
+        restrictive permissions (0o700). Set ANYMATE_DISABLE_LOGGING=1 to disable.
+        """
+        log_dir = _get_secure_log_dir()
+        return log_dir / f"anymate-{team_name}-{name}.log"

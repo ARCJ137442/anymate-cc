@@ -3,6 +3,7 @@ import asyncio
 import logging
 from .protocol.paths import PathResolver
 from .protocol.messaging import read_unread_messages, send_reply, send_idle_notification
+from .protocol.teams import read_config
 from .backends.base import BridgeSession
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,22 @@ class MessageBridge:
         self._sessions: dict[str, BridgeSession] = {}
         self._monitors: dict[str, asyncio.Task] = {}
         self._running = False
+        self._team_members_cache: set[str] | None = None
+
+    def _get_team_members(self) -> set[str]:
+        """Get set of valid team member names (cached)."""
+        if self._team_members_cache is None:
+            config = read_config(self._paths, self._team_name)
+            if config:
+                members = config.get("members", [])
+                self._team_members_cache = {m.get("name") for m in members if m.get("name")}
+            else:
+                self._team_members_cache = set()
+        return self._team_members_cache
+
+    def _invalidate_members_cache(self) -> None:
+        """Invalidate cached team members (call when team config changes)."""
+        self._team_members_cache = None
 
     async def register(self, agent_name: str, session: BridgeSession) -> None:
         self._sessions[agent_name] = session
@@ -78,10 +95,21 @@ class MessageBridge:
         while self._running and session.is_alive:
             try:
                 messages = read_unread_messages(self._paths, self._team_name, agent_name)
+                valid_members = self._get_team_members()
+
                 for msg in messages:
                     sender = msg.get("from", "team-lead")
                     if sender == agent_name:
                         continue  # Skip own echo
+
+                    # Security: Verify sender is a valid team member
+                    if sender not in valid_members and sender != "team-lead":
+                        logger.warning(
+                            "Rejecting message from unrecognized sender '%s' to %s (not in team member list)",
+                            sender, agent_name
+                        )
+                        continue
+
                     text = msg.get("text", "")
                     # Skip structured protocol messages (idle, shutdown, etc)
                     if text.startswith("{") and '"type"' in text:

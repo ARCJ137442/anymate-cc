@@ -231,8 +231,8 @@ def _get_or_create_bridge(team_name: str) -> MessageBridge:
             "prompt_pattern": {"type": "string", "description": "Optional regex prompt terminator pattern"},
             "max_chunk_size": {"type": "integer", "default": 4096, "description": "Split output into chunks of N chars. 0 or null to disable chunking."},
             "model": {"type": "string", "description": "Model to use (codex backend only, e.g. 'gpt-5.3-codex')"},
-            "sandbox": {"type": "string", "default": "danger-full-access", "description": "Sandbox mode for codex backend"},
-            "full_auto": {"type": "boolean", "default": True, "description": "Enable full-auto mode for codex backend"},
+            "sandbox": {"type": "string", "description": "Sandbox mode for codex backend (defaults to codex's own default, typically requires approval). Set to 'danger-full-access' to bypass."},
+            "full_auto": {"type": "boolean", "default": False, "description": "Enable full-auto mode for codex backend (defaults to False for security). Set to True to bypass approvals."},
         },
         "required": ["team_name", "name"],
     },
@@ -248,8 +248,8 @@ async def spawn_teammate(
     prompt_pattern: str | None = None,
     max_chunk_size: int | None = 4096,
     model: str | None = None,
-    sandbox: str = "danger-full-access",
-    full_auto: bool = True,
+    sandbox: str | None = None,
+    full_auto: bool = False,
 ) -> dict:
     assert _paths is not None and _config is not None
 
