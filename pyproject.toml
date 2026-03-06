@@ -2,7 +2,7 @@
 name = "anymate-cc"
 version = "0.1.0"
 description = "Inject external programs as teammates into Claude Code Agent Teams"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 license = "MIT"
 dependencies = [
     "filelock>=3.16",
