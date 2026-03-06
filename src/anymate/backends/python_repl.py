@@ -1,8 +1,6 @@
 """Python REPL backend for AnyMate-CC."""
 import asyncio
-import os
 import shutil
-import sys
 import uuid
 from .base import Backend, BridgeSession, BackendCapabilities, BackendStatus, OutputCallback
 
@@ -36,32 +34,11 @@ while True:
     print(SENTINEL, file=sys.stdout, flush=True)
 '''
 
-
-def _resolve_python_binary(explicit: str | None = None) -> str:
-    if explicit:
-        return explicit
-    env_python = os.environ.get("ANYMATE_PYTHON")
-    if env_python:
-        return env_python
-    if sys.executable:
-        return sys.executable
-    if shutil.which("python3"):
-        return "python3"
-    return "python"
-
-
 class PythonReplSession(BridgeSession):
-    def __init__(
-        self,
-        name: str,
-        team_name: str,
-        cwd: str,
-        python_binary: str | None = None,
-        on_output: OutputCallback | None = None,
-    ):
+    def __init__(self, name: str, team_name: str, cwd: str, python_binary: str = "python3", on_output: OutputCallback | None = None):
         super().__init__(name, team_name, on_output)
         self._cwd = cwd
-        self._python = _resolve_python_binary(python_binary)
+        self._python = python_binary
         self._sentinel = f"__ANYMATE_DONE_{uuid.uuid4().hex[:8]}"
         self._process: asyncio.subprocess.Process | None = None
         self._read_task: asyncio.Task | None = None
@@ -89,7 +66,7 @@ class PythonReplSession(BridgeSession):
                 raw = await asyncio.wait_for(self._process.stdout.readline(), timeout=120.0)
                 if not raw:
                     break
-                line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                line = raw.decode("utf-8", errors="replace").rstrip("\n")
                 if line == self._sentinel:
                     output = "\n".join(buffer).strip()
                     buffer.clear()
@@ -138,8 +115,8 @@ class PythonReplSession(BridgeSession):
 
 
 class PythonReplBackend(Backend):
-    def __init__(self, python_binary: str | None = None):
-        self._python = _resolve_python_binary(python_binary)
+    def __init__(self, python_binary: str = "python3"):
+        self._python = python_binary
 
     @property
     def name(self) -> str:
@@ -150,7 +127,7 @@ class PythonReplBackend(Backend):
         return BackendCapabilities(supports_streaming=True, supports_interrupt=True, is_conversational=True, supports_cwd=True)
 
     def is_available(self) -> bool:
-        return shutil.which(self._python) is not None or os.path.isfile(self._python)
+        return shutil.which(self._python) is not None
 
     def create_session(self, name, team_name, prompt, cwd, *, on_output=None, **kwargs):
         return PythonReplSession(name=name, team_name=team_name, cwd=cwd, python_binary=self._python, on_output=on_output)

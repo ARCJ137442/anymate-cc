@@ -121,7 +121,7 @@ Environment variables (all optional):
 |----------|---------|-------------|
 | `ANYMATE_CLAUDE_DIR` | `~/.claude` | Base directory for Claude Code teams/inboxes |
 | `ANYMATE_POLL_INTERVAL` | `1.0` | Inbox polling interval in seconds |
-| `ANYMATE_PYTHON` | current Python executable | Python binary for the python-repl backend |
+| `ANYMATE_PYTHON` | `python3` | Python binary for the python-repl backend |
 
 ## Project Structure
 

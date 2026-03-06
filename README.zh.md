@@ -121,7 +121,7 @@ Claude：[通过 SendMessage 发送消息给 py]
 |------|--------|------|
 | `ANYMATE_CLAUDE_DIR` | `~/.claude` | Claude Code 团队和信箱的根目录 |
 | `ANYMATE_POLL_INTERVAL` | `1.0` | 信箱轮询间隔（秒） |
-| `ANYMATE_PYTHON` | 当前 Python 可执行文件 | python-repl 后端使用的 Python 可执行文件 |
+| `ANYMATE_PYTHON` | `python3` | python-repl 后端使用的 Python 可执行文件 |
 
 ## 项目结构
 

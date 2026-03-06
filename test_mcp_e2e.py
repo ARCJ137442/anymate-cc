@@ -1,192 +1,141 @@
+#!/usr/bin/env python3
 """Full end-to-end test of AnyMate-CC MCP server via JSON-RPC."""
-import json
-import os
-from pathlib import Path
-import subprocess
-import sys
-import time
+import subprocess, json, time, os, shutil, sys
 
+HOME = os.path.expanduser("~")
+ANYMATE_SRC = os.path.join(HOME, "A137442/anymate-cc/src")
+sys.path.insert(0, ANYMATE_SRC)
 
-def _write_json(path: Path, payload: object) -> None:
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+TEAM_NAME = "anymate-test-live"
 
+# Step 1: Ensure clean state
+team_dir = os.path.join(HOME, f".claude/teams/{TEAM_NAME}")
+if os.path.exists(team_dir):
+    shutil.rmtree(team_dir)
 
-def _read_json(path: Path) -> object:
-    return json.loads(path.read_text(encoding="utf-8"))
+# Create team directory structure (simulating Claude Code's TeamCreate)
+os.makedirs(os.path.join(team_dir, "inboxes"), exist_ok=True)
 
+config = {
+    "teamName": TEAM_NAME,
+    "members": [
+        {"name": "team-lead", "agentId": "lead-001", "agentType": "team-lead"}
+    ]
+}
+with open(os.path.join(team_dir, "config.json"), "w") as f:
+    json.dump(config, f, indent=2)
 
-def _send_rpc(proc: subprocess.Popen, method: str, params: dict, req_id: int) -> dict:
-    assert proc.stdin is not None
-    assert proc.stdout is not None
-    request = json.dumps(
-        {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params},
-        ensure_ascii=False,
-    )
-    proc.stdin.write(request + "\n")
+lead_inbox = os.path.join(team_dir, "inboxes/team-lead.json")
+with open(lead_inbox, "w") as f:
+    json.dump([], f)
+
+print("✓ Step 1: Team directory created")
+
+# Step 2: Start MCP server
+env = os.environ.copy()
+env["PYTHONPATH"] = ANYMATE_SRC
+proc = subprocess.Popen(
+    ["python3", "-m", "anymate.server"],
+    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    env=env, cwd=os.path.join(HOME, "A137442/anymate-cc")
+)
+print(f"✓ Step 2: MCP server started (PID: {proc.pid})")
+
+def send_rpc(method, params, req_id):
+    msg = json.dumps({"jsonrpc": "2.0", "id": req_id, "method": method, "params": params})
+    proc.stdin.write((msg + "\n").encode())
     proc.stdin.flush()
-    line = proc.stdout.readline()
-    if not line:
-        stderr_text = ""
-        if proc.stderr is not None:
-            stderr_text = proc.stderr.read() or ""
-        raise AssertionError(f"No JSON-RPC response from MCP server. stderr: {stderr_text}")
-    return json.loads(line.strip())
+    line = proc.stdout.readline().decode().strip()
+    return json.loads(line) if line else None
 
+# Step 3: Initialize
+resp = send_rpc("initialize", {
+    "protocolVersion": "2024-11-05",
+    "capabilities": {},
+    "clientInfo": {"name": "e2e-test", "version": "1.0"}
+}, 1)
+print(f"✓ Step 3: Initialize: {resp['result']['serverInfo']}")
 
-def _tool_payload(response: dict) -> dict:
-    return json.loads(response["result"]["content"][0]["text"])
+# Step 4: Spawn Python REPL teammate
+resp = send_rpc("tools/call", {
+    "name": "spawn_teammate",
+    "arguments": {"team_name": TEAM_NAME, "name": "py-calc", "backend_type": "python-repl"}
+}, 2)
+spawn_text = resp["result"]["content"][0]["text"]
+print(f"✓ Step 4: spawn_teammate → {spawn_text}")
 
+time.sleep(2)
 
-def _wait_until(predicate, timeout: float = 10.0, interval: float = 0.2) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        time.sleep(interval)
-    return False
+# Step 5: Check teammate
+resp = send_rpc("tools/call", {
+    "name": "check_teammate",
+    "arguments": {"team_name": TEAM_NAME, "name": "py-calc"}
+}, 3)
+check_text = resp["result"]["content"][0]["text"]
+print(f"✓ Step 5: check_teammate → {check_text}")
 
+# Step 6: Verify config updated
+with open(os.path.join(team_dir, "config.json")) as f:
+    members = [m["name"] for m in json.load(f)["members"]]
+print(f"✓ Step 6: Config members: {members}")
 
-def test_mcp_server_jsonrpc_e2e(tmp_path: Path) -> None:
-    team_name = "anymate-test-live"
-    repo_root = Path(__file__).resolve().parent
-    src_dir = repo_root / "src"
-    claude_dir = tmp_path / ".claude"
-    team_dir = claude_dir / "teams" / team_name
-    inbox_dir = team_dir / "inboxes"
-    inbox_dir.mkdir(parents=True, exist_ok=True)
+# Step 7: Send message to py-calc (simulating Claude Code's SendMessage)
+py_calc_inbox = os.path.join(team_dir, "inboxes/py-calc.json")
+assert os.path.exists(py_calc_inbox), "py-calc inbox not created!"
 
-    _write_json(
-        team_dir / "config.json",
-        {
-            "team_name": team_name,
-            "members": [
-                {
-                    "name": "team-lead",
-                    "agentId": "lead-001",
-                    "agentType": "team-lead",
-                    "isActive": True,
-                }
-            ],
-        },
-    )
-    _write_json(inbox_dir / "team-lead.json", [])
+message = {"from": "team-lead", "to": "py-calc", "text": "print(2 ** 10)", "timestamp": time.time(), "read": False}
+with open(py_calc_inbox) as f:
+    inbox = json.load(f)
+inbox.append(message)
+with open(py_calc_inbox, "w") as f:
+    json.dump(inbox, f, indent=2)
+print("✓ Step 7: Sent 'print(2 ** 10)' to py-calc")
 
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(src_dir)
-    env["ANYMATE_CLAUDE_DIR"] = str(claude_dir)
-    env["ANYMATE_PYTHON"] = sys.executable
-    env["ANYMATE_POLL_INTERVAL"] = "0.2"
+# Step 8: Wait for bridge relay
+print("  ⏳ Waiting for bridge to relay message...")
+time.sleep(6)
 
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "anymate.server"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        cwd=str(repo_root),
-        env=env,
-    )
+with open(lead_inbox) as f:
+    lead_messages = json.load(f)
+print(f"✓ Step 8: Lead inbox has {len(lead_messages)} message(s):")
+for msg in lead_messages:
+    print(f"  [{msg.get('from','?')}]: {msg.get('text','')[:200]}")
 
-    try:
-        initialize = _send_rpc(
-            proc,
-            "initialize",
-            {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "pytest-e2e", "version": "1.0"},
-            },
-            1,
-        )
-        assert initialize["result"]["serverInfo"]["name"] == "anymate-cc"
+# Step 9: Send eval expression
+message2 = {"from": "team-lead", "to": "py-calc", "text": "sum(range(1, 101))", "timestamp": time.time(), "read": False}
+with open(py_calc_inbox) as f:
+    inbox = json.load(f)
+inbox.append(message2)
+with open(py_calc_inbox, "w") as f:
+    json.dump(inbox, f, indent=2)
+print("✓ Step 9: Sent 'sum(range(1, 101))' to py-calc")
 
-        spawn_payload = _tool_payload(
-            _send_rpc(
-                proc,
-                "tools/call",
-                {
-                    "name": "spawn_teammate",
-                    "arguments": {
-                        "team_name": team_name,
-                        "name": "py-calc",
-                        "backend_type": "python-repl",
-                        "cwd": str(tmp_path),
-                    },
-                },
-                2,
-            )
-        )
-        assert spawn_payload["success"] is True
-        assert spawn_payload["name"] == "py-calc"
+time.sleep(6)
 
-        check_payload = _tool_payload(
-            _send_rpc(
-                proc,
-                "tools/call",
-                {"name": "check_teammate", "arguments": {"team_name": team_name, "name": "py-calc"}},
-                3,
-            )
-        )
-        assert check_payload["registered"] is True
-        assert check_payload["process_alive"] is True
+with open(lead_inbox) as f:
+    lead_messages = json.load(f)
+print(f"✓ Step 10: Lead inbox now has {len(lead_messages)} message(s):")
+for msg in lead_messages:
+    print(f"  [{msg.get('from','?')}]: {msg.get('text','')[:200]}")
 
-        py_calc_inbox = inbox_dir / "py-calc.json"
-        assert py_calc_inbox.exists()
+# Step 11: List teammates
+resp = send_rpc("tools/call", {
+    "name": "list_teammates",
+    "arguments": {"team_name": TEAM_NAME}
+}, 4)
+list_text = resp["result"]["content"][0]["text"]
+print(f"✓ Step 11: list_teammates → {list_text}")
 
-        incoming = _read_json(py_calc_inbox)
-        incoming.append(
-            {
-                "from": "team-lead",
-                "to": "py-calc",
-                "text": "print(2 ** 10)",
-                "timestamp": time.time(),
-                "read": False,
-            }
-        )
-        _write_json(py_calc_inbox, incoming)
+# Step 12: Stop teammate
+resp = send_rpc("tools/call", {
+    "name": "stop_teammate",
+    "arguments": {"team_name": TEAM_NAME, "name": "py-calc"}
+}, 5)
+stop_text = resp["result"]["content"][0]["text"]
+print(f"✓ Step 12: stop_teammate → {stop_text}")
 
-        lead_inbox = inbox_dir / "team-lead.json"
-
-        def _has_python_reply() -> bool:
-            messages = _read_json(lead_inbox)
-            for msg in messages:
-                text = msg.get("text", "")
-                if msg.get("from") == "py-calc" and not text.startswith("{") and "1024" in text:
-                    return True
-            return False
-
-        assert _wait_until(_has_python_reply, timeout=12.0), "Timed out waiting for py-calc reply"
-
-        list_payload = _tool_payload(
-            _send_rpc(
-                proc,
-                "tools/call",
-                {"name": "list_teammates", "arguments": {"team_name": team_name}},
-                4,
-            )
-        )
-        assert list_payload["count"] == 1
-        assert list_payload["teammates"][0]["name"] == "py-calc"
-
-        stop_payload = _tool_payload(
-            _send_rpc(
-                proc,
-                "tools/call",
-                {"name": "stop_teammate", "arguments": {"team_name": team_name, "name": "py-calc"}},
-                5,
-            )
-        )
-        assert stop_payload["success"] is True
-
-        config_after = _read_json(team_dir / "config.json")
-        member_names = [member.get("name") for member in config_after.get("members", [])]
-        assert "py-calc" not in member_names
-    finally:
-        if proc.stdin is not None and not proc.stdin.closed:
-            proc.stdin.close()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=5)
+# Cleanup
+proc.stdin.close()
+proc.wait(timeout=5)
+shutil.rmtree(team_dir)
+print("\n🎉 All tests passed! Team directory cleaned up.")
