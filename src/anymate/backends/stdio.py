@@ -118,7 +118,8 @@ class StdioSession(BridgeSession):
         if not self._on_output:
             self._buffer.clear()
             return
-        output = "\n".join(self._buffer).strip()
+        # Only strip trailing newlines, preserve leading/trailing blank lines
+        output = "\n".join(self._buffer).rstrip("\r\n")
         self._buffer.clear()
         if output:
             if self._pane_logger:
@@ -199,10 +200,15 @@ class StdioBackend(Backend):
             raise ValueError("Stdio backend requires 'command'")
 
         if isinstance(command, str):
-            # Use posix=False to preserve backslashes on Windows (e.g., C:\path\to\file.exe)
+            # Use posix=False on Windows to preserve backslashes (e.g., C:\path\to\file.exe)
             # This prevents shlex from treating backslashes as escape sequences
             import sys
             parsed = shlex.split(command, posix=(sys.platform != "win32"))
+
+            # On Windows with posix=False, shlex preserves quotes in the output
+            # Remove surrounding quotes from each argument (e.g., '"C:\Program Files\python.exe"' -> 'C:\Program Files\python.exe')
+            if sys.platform == "win32":
+                parsed = [arg.strip('"').strip("'") for arg in parsed]
         else:
             parsed = list(command)
 

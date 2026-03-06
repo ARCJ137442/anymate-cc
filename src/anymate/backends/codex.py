@@ -13,7 +13,12 @@ from .stdio import StdioSession, make_sentinel
 # Python wrapper that loops: read prompt from stdin → call codex exec --json
 # → parse JSONL → extract last agent_message → print result + sentinel.
 _CODEX_WRAPPER = '''\
-import json, subprocess, sys, os
+import json, subprocess, sys, os, io
+
+# Force UTF-8 encoding for stdin/stdout to match parent process
+sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8')
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', line_buffering=True)
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', line_buffering=True)
 
 SENTINEL = "{sentinel}"
 CODEX_BIN = {codex_binary}
@@ -32,7 +37,7 @@ while True:
     cmd = [CODEX_BIN, "exec", "--json", "--skip-git-repo-check"] + EXTRA_ARGS + [prompt]
     try:
         proc = subprocess.run(
-            cmd, capture_output=True, text=True, cwd=CWD,
+            cmd, capture_output=True, encoding='utf-8', cwd=CWD,
         )
         # Parse JSONL, collect agent_message items
         messages = []
