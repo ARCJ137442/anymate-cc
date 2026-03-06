@@ -281,6 +281,7 @@ async def spawn_teammate(
         "cwd": cwd,
         "subscriptions": [],
         "backendType": "anymate",
+        "anymateBackendType": backend_type,
         "opencodeSessionId": None,
         "isActive": True,
     }
@@ -290,27 +291,53 @@ async def spawn_teammate(
     except ValueError as e:
         return {"error": str(e)}
 
-    ensure_inbox(_paths, team_name, name)
-
+    inbox_path = ensure_inbox(_paths, team_name, name)
     bridge = _get_or_create_bridge(team_name)
     chunk_size = max_chunk_size if (max_chunk_size is not None and max_chunk_size > 0) else None
-    on_output = bridge._make_output_handler(name, color=color,
-                                            max_chunk_size=chunk_size)
-    session = backend.create_session(
-        name=name,
-        team_name=team_name,
-        prompt=prompt,
-        cwd=cwd,
-        on_output=on_output,
-        command=command,
-        silence_timeout=silence_timeout,
-        prompt_pattern=prompt_pattern,
-    )
+    session = None
+    registered = False
 
-    await session.start()
-    await bridge.register(name, session)
-    if not bridge._running:
-        await bridge.start()
+    try:
+        on_output = bridge._make_output_handler(name, color=color, max_chunk_size=chunk_size)
+        session = backend.create_session(
+            name=name,
+            team_name=team_name,
+            prompt=prompt,
+            cwd=cwd,
+            on_output=on_output,
+            command=command,
+            silence_timeout=silence_timeout,
+            prompt_pattern=prompt_pattern,
+        )
+        await session.start()
+        await bridge.register(name, session)
+        registered = True
+        if not bridge._running:
+            await bridge.start()
+    except Exception as exc:
+        if registered:
+            try:
+                await bridge.unregister(name)
+            except Exception:
+                logger.warning("Failed to unregister teammate %s during rollback", name, exc_info=True)
+        elif session is not None and session.is_alive:
+            try:
+                await session.stop()
+            except Exception:
+                logger.warning("Failed to stop teammate %s during rollback", name, exc_info=True)
+
+        try:
+            remove_member(_paths, team_name, name)
+        except Exception:
+            logger.warning("Failed to rollback member %s from team %s", name, team_name, exc_info=True)
+
+        try:
+            if inbox_path.exists():
+                inbox_path.unlink()
+        except OSError:
+            logger.warning("Failed to rollback inbox for teammate %s", name, exc_info=True)
+
+        return {"error": f"Failed to start teammate '{name}': {exc}"}
 
     return {
         "success": True,
@@ -378,7 +405,7 @@ async def check_teammate(team_name: str, name: str) -> dict:
         "registered": True,
         "process_alive": session.is_alive if session else False,
         "status": session.status.value if session else "not_managed",
-        "backend_type": member.get("backendType", "unknown"),
+        "backend_type": member.get("anymateBackendType") or "unknown",
         "color": member.get("color", ""),
     }
 
@@ -405,7 +432,7 @@ async def list_teammates(team_name: str) -> dict:
         {
             "name": m.get("name"),
             "agent_id": m.get("agentId"),
-            "backend_type": m.get("backendType"),
+            "backend_type": m.get("anymateBackendType") or "unknown",
             "is_active": m.get("isActive", False),
             "color": m.get("color", ""),
         }

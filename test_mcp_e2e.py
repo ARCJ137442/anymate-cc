@@ -128,6 +128,30 @@ def test_mcp_server_jsonrpc_e2e(tmp_path: Path) -> None:
         assert "max_chunk_size" in invalid_chunk["error"]
         assert not (inbox_dir / "bad-chunk.json").exists()
 
+        invalid_spawn = _tool_payload(
+            _send_rpc(
+                proc,
+                "tools/call",
+                {
+                    "name": "spawn_teammate",
+                    "arguments": {
+                        "team_name": team_name,
+                        "name": "bad-start",
+                        "backend_type": "stdio",
+                        "cwd": str(tmp_path),
+                        "command": ["definitely-missing-executable-xyz"],
+                    },
+                },
+                3,
+            )
+        )
+        assert "error" in invalid_spawn
+        assert "Failed to start teammate" in invalid_spawn["error"]
+        assert not (inbox_dir / "bad-start.json").exists()
+        config_after_failed_spawn = _read_json(team_dir / "config.json")
+        failed_member_names = [member.get("name") for member in config_after_failed_spawn.get("members", [])]
+        assert "bad-start" not in failed_member_names
+
         py_payload = _tool_payload(
             _send_rpc(
                 proc,
@@ -141,7 +165,7 @@ def test_mcp_server_jsonrpc_e2e(tmp_path: Path) -> None:
                         "cwd": str(tmp_path),
                     },
                 },
-                3,
+                4,
             )
         )
         assert py_payload["success"] is True
@@ -166,7 +190,7 @@ def test_mcp_server_jsonrpc_e2e(tmp_path: Path) -> None:
                         "silence_timeout": 0.5,
                     },
                 },
-                4,
+                5,
             )
         )
         assert stdio_payload["success"] is True
@@ -176,10 +200,11 @@ def test_mcp_server_jsonrpc_e2e(tmp_path: Path) -> None:
                 proc,
                 "tools/call",
                 {"name": "check_teammate", "arguments": {"team_name": team_name, "name": "py-calc"}},
-                5,
+                6,
             )
         )
         assert check_py["process_alive"] is True
+        assert check_py["backend_type"] == "python-repl"
 
         py_calc_inbox = inbox_dir / "py-calc.json"
         stdio_inbox = inbox_dir / "stdio-echo.json"
@@ -234,18 +259,21 @@ def test_mcp_server_jsonrpc_e2e(tmp_path: Path) -> None:
                 proc,
                 "tools/call",
                 {"name": "list_teammates", "arguments": {"team_name": team_name}},
-                6,
+                7,
             )
         )
         names = {item["name"] for item in listed["teammates"]}
         assert {"py-calc", "stdio-echo"} <= names
+        type_map = {item["name"]: item["backend_type"] for item in listed["teammates"]}
+        assert type_map["py-calc"] == "python-repl"
+        assert type_map["stdio-echo"] == "stdio"
 
         stop_py = _tool_payload(
             _send_rpc(
                 proc,
                 "tools/call",
                 {"name": "stop_teammate", "arguments": {"team_name": team_name, "name": "py-calc"}},
-                7,
+                8,
             )
         )
         assert stop_py["success"] is True
@@ -255,7 +283,7 @@ def test_mcp_server_jsonrpc_e2e(tmp_path: Path) -> None:
                 proc,
                 "tools/call",
                 {"name": "stop_teammate", "arguments": {"team_name": team_name, "name": "stdio-echo"}},
-                8,
+                9,
             )
         )
         assert stop_stdio["success"] is True
