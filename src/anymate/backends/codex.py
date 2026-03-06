@@ -16,7 +16,7 @@ _CODEX_WRAPPER = '''\
 import json, subprocess, sys, os
 
 SENTINEL = "{sentinel}"
-CODEX_BIN = "{codex_binary}"
+CODEX_BIN = {codex_binary}
 EXTRA_ARGS = {extra_args}
 CWD = os.getcwd()
 
@@ -123,7 +123,7 @@ class CodexBackend(Backend):
 
         wrapper_code = _CODEX_WRAPPER.format(
             sentinel=sentinel,
-            codex_binary=self._codex,
+            codex_binary=repr(self._codex),
             extra_args=repr(extra_args),
         )
         return StdioSession(
