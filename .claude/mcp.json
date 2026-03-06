@@ -1,11 +1,11 @@
 {
+  "$schema": "https://modelcontextprotocol.io/schema/mcp.json",
   "mcpServers": {
     "anymate": {
       "command": "python",
-      "args": ["-m", "anymate.server"],
-      "env": {
-        "PYTHONPATH": "H:/A137442/Develop/AI/anymate-cc/src"
-      }
+      "args": ["mcp-launcher.py"],
+      "cwd": "${workspaceFolder}",
+      "env": {}
     }
   }
 }
