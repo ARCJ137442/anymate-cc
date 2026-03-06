@@ -1,0 +1,24 @@
+src/anymate/backends/codex.py
+  0d3af4fae9619fda 71-86,88-89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.3",
+  "base_commit_sha": "4e772acae2cdf554f08e9c36f050318f6e6ee31a",
+  "prompts": {
+    "0d3af4fae9619fda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b679cb2b-5fca-4ff1-ae3a-fcce2214ed6e",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "ARCJ137442 <61109168+ARCJ137442@users.noreply.github.com>",
+      "messages": [],
+      "total_additions": 138,
+      "total_deletions": 122,
+      "accepted_lines": 39,
+      "overriden_lines": 0,
+      "messages_url": "https://usegitai.com/cas/0ce06b33c5a467f4482e4dbea4aff4961a2b974b4bd902a4538a2baf36738355"
+    }
+  }
+}
