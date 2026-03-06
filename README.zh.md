@@ -32,8 +32,10 @@ AnyMate-CC 借助 Claude Code 现有的团队基础设施运作：
 
 | 后端 | 标识 | 说明 |
 |------|------|------|
+| **Stdio** | `stdio` | 通用持久化命令后端。按哨兵或静默超时刷新输出，适合自定义 CLI 和脚本。 |
 | **Python REPL** | `python-repl` | 持久化 Python 会话。支持 `eval`（表达式）和 `exec`（语句），状态跨消息保留。 |
 | **Shell** | `shell` | 持久化 bash 会话。通过 `eval` 运行任意命令，适用于 CLI 工具、文件操作、git 等场景。 |
+| **Codex CLI** | `codex` | 调用 `codex exec --json`，并返回每次请求的最终 `agent_message`。 |
 
 后端采用插件式设计 — 实现 `anymate.backends.base` 中的 `Backend` 和 `BridgeSession` 即可添加自定义后端。
 
@@ -57,7 +59,7 @@ export PYTHONPATH=/path/to/anymate-cc/src
 {
   "mcpServers": {
     "anymate": {
-      "command": "python3",
+      "command": "python",
       "args": ["-m", "anymate.server"],
       "env": {
         "PYTHONPATH": "/path/to/anymate-cc/src"
@@ -79,9 +81,13 @@ export PYTHONPATH=/path/to/anymate-cc/src
 参数：
   team_name    （必填）Claude Code 团队名称
   name         （必填）队友名称（如 "py-repl"）
-  backend_type （可选）"python-repl"（默认）或 "shell"
+  backend_type （可选）"stdio"（默认）、"python-repl"、"shell" 或 "codex"
+  command      （stdio 必填）要运行的命令（字符串或参数数组）
   cwd          （可选）子进程的工作目录
   prompt       （可选）初始上下文描述
+  silence_timeout （stdio 可选）静默 N 秒后刷新输出
+  prompt_pattern  （stdio 可选）提示符终止正则
+  max_chunk_size  （可选）长输出分块大小（0 表示不分块）
 ```
 
 团队必须事先存在（先用 Claude Code 的 `TeamCreate` 工具创建）。
@@ -121,7 +127,7 @@ Claude：[通过 SendMessage 发送消息给 py]
 |------|--------|------|
 | `ANYMATE_CLAUDE_DIR` | `~/.claude` | Claude Code 团队和信箱的根目录 |
 | `ANYMATE_POLL_INTERVAL` | `1.0` | 信箱轮询间隔（秒） |
-| `ANYMATE_PYTHON` | 当前 Python 可执行文件 | python-repl 后端使用的 Python 可执行文件 |
+| `ANYMATE_PYTHON` | 当前 Python 可执行文件 | python-repl/codex 包装器使用的 Python 可执行文件 |
 
 ## 项目结构
 
@@ -133,8 +139,10 @@ src/anymate/
 ├── models.py              # 数据模型（TeammateMember、InboxMessage 等）
 ├── backends/
 │   ├── base.py            # Backend / BridgeSession 抽象接口
+│   ├── stdio.py           # 通用 stdio 后端/会话
 │   ├── python_repl.py     # Python REPL 后端
-│   └── shell.py           # Shell（bash）后端
+│   ├── shell.py           # Shell（bash）后端
+│   └── codex.py           # Codex CLI 后端
 └── protocol/
     ├── paths.py           # 团队目录与信箱的路径解析
     ├── teams.py           # 团队配置读写（注入/移除成员）

@@ -32,8 +32,10 @@ AnyMate-CC hooks into Claude Code's existing team infrastructure:
 
 | Backend | Key | Description |
 |---------|-----|-------------|
+| **Stdio** | `stdio` | Generic persistent command backend. Flushes output on sentinel or silence timeout; suitable for custom CLIs and scripts. |
 | **Python REPL** | `python-repl` | Persistent Python session. Supports `eval` (expressions) and `exec` (statements). State persists across messages. |
 | **Shell** | `shell` | Persistent bash session. Runs arbitrary commands via `eval`. Useful for CLI tools, file operations, git, etc. |
+| **Codex CLI** | `codex` | Calls `codex exec --json` and returns the final `agent_message` for each request. |
 
 Backends are pluggable — implement `Backend` and `BridgeSession` from `anymate.backends.base` to add your own.
 
@@ -57,7 +59,7 @@ Add to your `.mcp.json` (project-level) or `~/.claude/claude_code_config.json` (
 {
   "mcpServers": {
     "anymate": {
-      "command": "python3",
+      "command": "python",
       "args": ["-m", "anymate.server"],
       "env": {
         "PYTHONPATH": "/path/to/anymate-cc/src"
@@ -79,9 +81,13 @@ Spawn an external process as a teammate in an existing team.
 Parameters:
   team_name    (required)  Name of the Claude Code team
   name         (required)  Teammate name (e.g. "py-repl")
-  backend_type (optional)  "python-repl" (default) or "shell"
+  backend_type (optional)  "stdio" (default), "python-repl", "shell", or "codex"
+  command      (required for stdio) Command to run (string or argv list)
   cwd          (optional)  Working directory for the subprocess
   prompt       (optional)  Initial context/description
+  silence_timeout (optional, stdio) Flush output after N seconds of silence
+  prompt_pattern  (optional, stdio) Regex prompt terminator
+  max_chunk_size  (optional) Split long outputs into chunks (0 disables)
 ```
 
 The team must already exist (create it with Claude Code's `TeamCreate` tool first).
@@ -121,7 +127,7 @@ Environment variables (all optional):
 |----------|---------|-------------|
 | `ANYMATE_CLAUDE_DIR` | `~/.claude` | Base directory for Claude Code teams/inboxes |
 | `ANYMATE_POLL_INTERVAL` | `1.0` | Inbox polling interval in seconds |
-| `ANYMATE_PYTHON` | current Python executable | Python binary for the python-repl backend |
+| `ANYMATE_PYTHON` | current Python executable | Python binary for python-repl/codex wrapper launchers |
 
 ## Project Structure
 
@@ -133,8 +139,10 @@ src/anymate/
 ├── models.py              # Data models (TeammateMember, InboxMessage, etc.)
 ├── backends/
 │   ├── base.py            # Abstract Backend / BridgeSession interfaces
+│   ├── stdio.py           # Generic stdio backend/session
 │   ├── python_repl.py     # Python REPL backend
-│   └── shell.py           # Shell (bash) backend
+│   ├── shell.py           # Shell (bash) backend
+│   └── codex.py           # Codex CLI backend
 └── protocol/
     ├── paths.py           # Path resolution for team dirs and inboxes
     ├── teams.py           # Team config read/write (inject/remove members)
