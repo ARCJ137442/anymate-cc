@@ -81,4 +81,5 @@ class PythonReplBackend(Backend):
             sentinel=sentinel,
             input_prefix="__ANYMATE__:",
             on_output=on_output,
+            pane_logger=kwargs.get("pane_logger"),
         )

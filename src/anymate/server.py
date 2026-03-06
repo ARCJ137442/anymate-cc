@@ -18,6 +18,7 @@ from .protocol.teams import inject_member, remove_member, get_member, read_confi
 from .backends import discover_backends, get_backend
 from .bridge import MessageBridge
 from .models import COLOR_PALETTE
+from .tmux import is_tmux_available, create_pane, kill_pane, PaneLogger
 
 logger = logging.getLogger(__name__)
 
@@ -268,6 +269,16 @@ async def spawn_teammate(
     existing_count = len(config.get("members", []))
     color = COLOR_PALETTE[existing_count % len(COLOR_PALETTE)]
 
+    # Create tmux pane (before injecting member so pane_id is in config)
+    pane_id = None
+    pane_logger = None
+    if is_tmux_available():
+        log_file = PaneLogger.log_path(name, team_name)
+        pane_id = create_pane(name, log_file, color=color)
+        if pane_id:
+            pane_logger = PaneLogger(log_file, name)
+            pane_logger.open()
+
     member = {
         "agentId": f"{name}@{team_name}",
         "name": name,
@@ -277,7 +288,7 @@ async def spawn_teammate(
         "color": color,
         "planModeRequired": False,
         "joinedAt": int(time.time() * 1000),
-        "tmuxPaneId": "",
+        "tmuxPaneId": pane_id or "",
         "cwd": cwd,
         "subscriptions": [],
         "backendType": "anymate",
@@ -289,6 +300,10 @@ async def spawn_teammate(
     try:
         inject_member(_paths, team_name, member)
     except ValueError as e:
+        if pane_id:
+            kill_pane(pane_id)
+        if pane_logger:
+            pane_logger.close()
         return {"error": str(e)}
 
     inbox_path = ensure_inbox(_paths, team_name, name)
@@ -308,6 +323,7 @@ async def spawn_teammate(
             command=command,
             silence_timeout=silence_timeout,
             prompt_pattern=prompt_pattern,
+            pane_logger=pane_logger,
         )
         await session.start()
         await bridge.register(name, session)
@@ -337,9 +353,15 @@ async def spawn_teammate(
         except OSError:
             logger.warning("Failed to rollback inbox for teammate %s", name, exc_info=True)
 
+        # Clean up tmux pane on rollback
+        if pane_id:
+            kill_pane(pane_id)
+        if pane_logger:
+            pane_logger.close()
+
         return {"error": f"Failed to start teammate '{name}': {exc}"}
 
-    return {
+    result = {
         "success": True,
         "name": name,
         "team_name": team_name,
@@ -348,6 +370,9 @@ async def spawn_teammate(
         "color": color,
         "message": f"Teammate '{name}' ({backend_type}) spawned and monitoring inbox.",
     }
+    if pane_id:
+        result["tmux_pane_id"] = pane_id
+    return result
 
 
 @mcp.tool(
@@ -365,6 +390,10 @@ async def spawn_teammate(
 async def stop_teammate(team_name: str, name: str) -> dict:
     assert _paths is not None
 
+    # Get pane_id before removing member
+    member = get_member(_paths, team_name, name)
+    pane_id = member.get("tmuxPaneId", "") if member else ""
+
     bridge = _bridges.get(team_name)
     if bridge:
         session = bridge.get_session(name)
@@ -372,8 +401,20 @@ async def stop_teammate(team_name: str, name: str) -> dict:
             await bridge.unregister(name)
 
     removed = remove_member(_paths, team_name, name)
+
+    # Kill tmux pane and clean up log file
+    pane_killed = False
+    if pane_id:
+        pane_killed = kill_pane(pane_id)
+    log_file = PaneLogger.log_path(name, team_name)
+    if log_file.exists():
+        log_file.unlink()
+
     if removed:
-        return {"success": True, "message": f"Teammate '{name}' stopped and removed from team.", "removed": removed}
+        result = {"success": True, "message": f"Teammate '{name}' stopped and removed from team.", "removed": removed}
+        if pane_killed:
+            result["pane_killed"] = True
+        return result
     return {"success": False, "message": f"Teammate '{name}' not found in team '{team_name}'."}
 
 
@@ -407,6 +448,8 @@ async def check_teammate(team_name: str, name: str) -> dict:
         "status": session.status.value if session else "not_managed",
         "backend_type": member.get("anymateBackendType") or "unknown",
         "color": member.get("color", ""),
+        "tmux_pane_id": member.get("tmuxPaneId", ""),
+        "has_pane": bool(member.get("tmuxPaneId")),
     }
 
 

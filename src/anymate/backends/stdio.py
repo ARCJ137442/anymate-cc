@@ -26,6 +26,7 @@ class StdioSession(BridgeSession):
         input_prefix: str | None = None,
         prompt_pattern: str | None = None,
         on_output: OutputCallback | None = None,
+        pane_logger=None,
     ):
         super().__init__(name, team_name, on_output)
         self._command = command
@@ -38,6 +39,7 @@ class StdioSession(BridgeSession):
         self._read_task: asyncio.Task | None = None
         self._pending_reply_to: str = "team-lead"
         self._buffer: list[str] = []
+        self._pane_logger = pane_logger
 
     async def start(self) -> None:
         self._status = BackendStatus.STARTING
@@ -119,6 +121,8 @@ class StdioSession(BridgeSession):
         output = "\n".join(self._buffer).strip()
         self._buffer.clear()
         if output:
+            if self._pane_logger:
+                self._pane_logger.log_output(output, self._pending_reply_to)
             self._on_output(output, self._pending_reply_to)
         elif default_when_empty:
             self._on_output("(no output)", self._pending_reply_to)
@@ -130,6 +134,9 @@ class StdioSession(BridgeSession):
         self._status = BackendStatus.RUNNING
         self._pending_reply_to = reply_to
         assert self._process.stdin is not None
+
+        if self._pane_logger:
+            self._pane_logger.log_input(text, reply_to)
 
         if self._sentinel:
             escaped = text.replace("\n", "\\n")
@@ -157,6 +164,8 @@ class StdioSession(BridgeSession):
             except asyncio.CancelledError:
                 pass
 
+        if self._pane_logger:
+            self._pane_logger.close()
         self._status = BackendStatus.STOPPED
 
     @property
@@ -207,6 +216,7 @@ class StdioBackend(Backend):
             input_prefix=kwargs.get("input_prefix"),
             prompt_pattern=prompt_pattern,
             on_output=on_output,
+            pane_logger=kwargs.get("pane_logger"),
         )
 
 
