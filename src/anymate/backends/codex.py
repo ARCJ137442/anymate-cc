@@ -3,7 +3,9 @@
 Wraps `codex exec --json` in a persistent Python loop that extracts only the
 final agent message from each invocation, filtering out thinking/exec noise.
 """
+import os
 import shutil
+import sys
 
 from .base import Backend, BackendCapabilities
 from .stdio import StdioSession, make_sentinel
@@ -55,9 +57,23 @@ while True:
 '''
 
 
+def _resolve_python_binary(explicit: str | None = None) -> str:
+    if explicit:
+        return explicit
+    env_python = os.environ.get("ANYMATE_PYTHON")
+    if env_python:
+        return env_python
+    if sys.executable:
+        return sys.executable
+    if shutil.which("python3"):
+        return "python3"
+    return "python"
+
+
 class CodexBackend(Backend):
-    def __init__(self, codex_binary: str = "codex"):
+    def __init__(self, codex_binary: str = "codex", python_binary: str | None = None):
         self._codex = codex_binary
+        self._python = _resolve_python_binary(python_binary)
 
     @property
     def name(self) -> str:
@@ -73,7 +89,7 @@ class CodexBackend(Backend):
         )
 
     def is_available(self) -> bool:
-        return shutil.which(self._codex) is not None
+        return shutil.which(self._codex) is not None or os.path.isfile(self._codex)
 
     def create_session(self, name, team_name, prompt, cwd, *, on_output=None, **kwargs):
         sentinel = make_sentinel()
@@ -99,7 +115,7 @@ class CodexBackend(Backend):
         return StdioSession(
             name=name,
             team_name=team_name,
-            command=["python3", "-u", "-c", wrapper_code],
+            command=[self._python, "-u", "-c", wrapper_code],
             cwd=cwd,
             sentinel=sentinel,
             input_prefix="__ANYMATE__:",

@@ -10,6 +10,8 @@ logger = logging.getLogger(__name__)
 
 def _split_chunks(text: str, size: int) -> list[str]:
     """Split text into chunks, breaking at newlines when possible."""
+    if size <= 0:
+        raise ValueError("Chunk size must be > 0")
     if len(text) <= size:
         return [text]
     chunks: list[str] = []
@@ -98,7 +100,8 @@ class MessageBridge:
         """
         def on_output(text: str, reply_to: str) -> None:
             try:
-                chunks = _split_chunks(text, max_chunk_size) if max_chunk_size else [text]
+                effective_chunk_size = max_chunk_size if (max_chunk_size is not None and max_chunk_size > 0) else None
+                chunks = _split_chunks(text, effective_chunk_size) if effective_chunk_size else [text]
                 total = len(chunks)
                 for i, chunk in enumerate(chunks, 1):
                     label = f"[{i}/{total}] " if total > 1 else ""

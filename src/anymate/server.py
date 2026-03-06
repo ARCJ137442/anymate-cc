@@ -253,6 +253,8 @@ async def spawn_teammate(
     backend = get_backend(backend_type)
     if backend is None:
         return {"error": f"Backend '{backend_type}' not available. Available: {list(discover_backends().keys())}"}
+    if max_chunk_size is not None and max_chunk_size < 0:
+        return {"error": "Parameter 'max_chunk_size' must be >= 0"}
     if backend_type == "stdio" and command is None:
         return {"error": "Parameter 'command' is required when backend_type='stdio'"}
     if backend_type == "stdio":
@@ -291,8 +293,9 @@ async def spawn_teammate(
     ensure_inbox(_paths, team_name, name)
 
     bridge = _get_or_create_bridge(team_name)
+    chunk_size = max_chunk_size if (max_chunk_size is not None and max_chunk_size > 0) else None
     on_output = bridge._make_output_handler(name, color=color,
-                                               max_chunk_size=max_chunk_size or None)
+                                            max_chunk_size=chunk_size)
     session = backend.create_session(
         name=name,
         team_name=team_name,
