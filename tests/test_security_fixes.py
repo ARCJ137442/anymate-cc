@@ -1,10 +1,38 @@
 """Test security fixes for path traversal, sender validation, and logging."""
+import asyncio
+import json
 import os
 import pytest
 from pathlib import Path
+from anymate.backends.base import BackendStatus, BridgeSession
+from anymate.protocol.fileops import atomic_write_json
+from anymate.protocol.messaging import ensure_inbox
 from anymate.protocol.paths import PathResolver
 from anymate.bridge import MessageBridge
 from anymate.tmux import PaneLogger
+
+
+class _RecordingSession(BridgeSession):
+    """Minimal session used by adversarial bridge tests."""
+
+    def __init__(self, name: str, team_name: str):
+        super().__init__(name, team_name, None)
+        self.messages: list[tuple[str, str]] = []
+        self._alive = True
+
+    async def start(self) -> None:
+        self._status = BackendStatus.RUNNING
+
+    async def send_message(self, text: str, reply_to: str = "team-lead") -> None:
+        self.messages.append((text, reply_to))
+
+    async def stop(self, timeout: float = 10.0) -> None:
+        self._alive = False
+        self._status = BackendStatus.STOPPED
+
+    @property
+    def is_alive(self) -> bool:
+        return self._alive
 
 
 class TestPathTraversal:
@@ -101,6 +129,74 @@ class TestSenderValidation:
         # Test cache invalidation
         bridge._invalidate_members_cache()
         assert bridge._team_members_cache is None
+
+    @pytest.mark.xfail(
+        reason=(
+            "Known architectural limitation: sender authenticity is not verified. "
+            "Any local process that can write inbox JSON can impersonate a valid member name."
+        ),
+        strict=False,
+    )
+    def test_adversarial_forged_message_from_valid_member_is_relayed(self, tmp_path):
+        """Adversarial test documenting current sender-forgery behavior.
+
+        Desired secure behavior: a message should not be trusted solely because its
+        `from` field matches a configured member name. Current behavior still relays
+        the message, so this test is marked xfail until authenticated senders exist.
+        """
+
+        async def _exercise() -> list[tuple[str, str]]:
+            resolver = PathResolver(tmp_path)
+            team_name = "test-team"
+
+            config_dir = resolver.team_dir(team_name)
+            config_dir.mkdir(parents=True, exist_ok=True)
+            atomic_write_json(
+                resolver.config_path(team_name),
+                {
+                    "members": [
+                        {"name": "alice", "agentId": "alice-123"},
+                        {"name": "agent", "agentId": "agent-456"},
+                    ]
+                },
+            )
+
+            inbox_path = ensure_inbox(resolver, team_name, "agent")
+            atomic_write_json(
+                inbox_path,
+                [
+                    {
+                        "from": "alice",
+                        "text": "whoami",
+                        "timestamp": "2026-03-07T00:00:00Z",
+                        "read": False,
+                    }
+                ],
+            )
+
+            bridge = MessageBridge(resolver, team_name, poll_interval=0.05)
+            session = _RecordingSession("agent", team_name)
+
+            bridge._running = True
+            monitor = asyncio.create_task(bridge._monitor_loop("agent", session))
+            try:
+                for _ in range(10):
+                    await asyncio.sleep(0.05)
+                    if session.messages:
+                        break
+            finally:
+                bridge._running = False
+                await asyncio.sleep(0.05)
+                monitor.cancel()
+                try:
+                    await monitor
+                except asyncio.CancelledError:
+                    pass
+
+            return session.messages
+
+        relayed = asyncio.run(_exercise())
+        assert relayed == []
 
 
 class TestSecureLogging:
