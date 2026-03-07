@@ -18,6 +18,7 @@ from .protocol.teams import inject_member, remove_member, get_member, read_confi
 from .backends import discover_backends, get_backend
 from .bridge import MessageBridge
 from .models import COLOR_PALETTE
+from .tmux import is_tmux_available, create_pane, kill_pane, PaneLogger
 
 logger = logging.getLogger(__name__)
 
@@ -147,16 +148,9 @@ class McpStdioServer:
         if self._on_startup:
             await self._on_startup()
 
-        loop = asyncio.get_running_loop()
-        reader = asyncio.StreamReader()
-        await loop.connect_read_pipe(
-            lambda: asyncio.StreamReaderProtocol(reader),
-            sys.stdin.buffer,
-        )
-
         try:
             while True:
-                raw = await reader.readline()
+                raw = await asyncio.to_thread(sys.stdin.buffer.readline)
                 if not raw:
                     break  # EOF
                 line = raw.decode("utf-8", errors="replace").strip()
@@ -223,9 +217,22 @@ def _get_or_create_bridge(team_name: str) -> MessageBridge:
         "properties": {
             "team_name": {"type": "string", "description": "Name of the existing Claude Code team to join"},
             "name": {"type": "string", "description": "Name for the new teammate (e.g. 'py-repl')"},
-            "backend_type": {"type": "string", "default": "python-repl", "description": "Backend type"},
+            "backend_type": {"type": "string", "default": "stdio", "description": "Backend type"},
+            "command": {
+                "description": "Command for stdio backend (required when backend_type='stdio')",
+                "oneOf": [
+                    {"type": "string"},
+                    {"type": "array", "items": {"type": "string"}},
+                ],
+            },
             "cwd": {"type": "string", "default": ".", "description": "Working directory for subprocess"},
             "prompt": {"type": "string", "default": "", "description": "Initial prompt/context"},
+            "silence_timeout": {"type": "number", "default": 5.0, "description": "Flush output after N seconds of silence"},
+            "prompt_pattern": {"type": "string", "description": "Optional regex prompt terminator pattern"},
+            "max_chunk_size": {"type": "integer", "default": 4096, "description": "Split output into chunks of N chars. 0 or null to disable chunking."},
+            "model": {"type": "string", "description": "Model to use (codex backend only, e.g. 'gpt-5.3-codex')"},
+            "sandbox": {"type": "string", "description": "Sandbox mode for codex backend (defaults to codex's own default, typically requires approval). Set to 'danger-full-access' to bypass."},
+            "full_auto": {"type": "boolean", "default": False, "description": "Enable full-auto mode for codex backend (defaults to False for security). Set to True to bypass approvals."},
         },
         "required": ["team_name", "name"],
     },
@@ -233,11 +240,27 @@ def _get_or_create_bridge(team_name: str) -> MessageBridge:
 async def spawn_teammate(
     team_name: str,
     name: str,
-    backend_type: str = "python-repl",
+    backend_type: str = "stdio",
+    command: str | list[str] | None = None,
     cwd: str = ".",
     prompt: str = "",
+    silence_timeout: float = 5.0,
+    prompt_pattern: str | None = None,
+    max_chunk_size: int | None = 4096,
+    model: str | None = None,
+    sandbox: str | None = None,
+    full_auto: bool = False,
 ) -> dict:
     assert _paths is not None and _config is not None
+
+    # Security: Validate team_name and name BEFORE any state changes
+    # This prevents path traversal attacks and avoids leaving dirty config on validation failure
+    try:
+        from anymate.protocol.paths import _validate_safe_name
+        _validate_safe_name(team_name, "team_name")
+        _validate_safe_name(name, "name")
+    except ValueError as e:
+        return {"error": str(e)}
 
     config = read_config(_paths, team_name)
     if config is None:
@@ -246,9 +269,30 @@ async def spawn_teammate(
     backend = get_backend(backend_type)
     if backend is None:
         return {"error": f"Backend '{backend_type}' not available. Available: {list(discover_backends().keys())}"}
+    if max_chunk_size is not None and max_chunk_size < 0:
+        return {"error": "Parameter 'max_chunk_size' must be >= 0"}
+    if backend_type == "stdio" and command is None:
+        return {"error": "Parameter 'command' is required when backend_type='stdio'"}
+    if backend_type == "stdio":
+        if isinstance(command, str) and not command.strip():
+            return {"error": "Parameter 'command' cannot be empty when backend_type='stdio'"}
+        if isinstance(command, list) and not command:
+            return {"error": "Parameter 'command' cannot be empty when backend_type='stdio'"}
+        if silence_timeout <= 0:
+            return {"error": "Parameter 'silence_timeout' must be > 0"}
 
     existing_count = len(config.get("members", []))
     color = COLOR_PALETTE[existing_count % len(COLOR_PALETTE)]
+
+    # Create tmux pane (before injecting member so pane_id is in config)
+    pane_id = None
+    pane_logger = None
+    if is_tmux_available():
+        log_file = PaneLogger.log_path(name, team_name)
+        pane_id = create_pane(name, log_file, color=color)
+        if pane_id:
+            pane_logger = PaneLogger(log_file, name)
+            pane_logger.open()
 
     member = {
         "agentId": f"{name}@{team_name}",
@@ -259,10 +303,11 @@ async def spawn_teammate(
         "color": color,
         "planModeRequired": False,
         "joinedAt": int(time.time() * 1000),
-        "tmuxPaneId": "",
+        "tmuxPaneId": pane_id or "",
         "cwd": cwd,
         "subscriptions": [],
         "backendType": "anymate",
+        "anymateBackendType": backend_type,
         "opencodeSessionId": None,
         "isActive": True,
     }
@@ -270,22 +315,71 @@ async def spawn_teammate(
     try:
         inject_member(_paths, team_name, member)
     except ValueError as e:
+        if pane_id:
+            kill_pane(pane_id)
+        if pane_logger:
+            pane_logger.close()
         return {"error": str(e)}
 
-    ensure_inbox(_paths, team_name, name)
-
+    inbox_path = ensure_inbox(_paths, team_name, name)
     bridge = _get_or_create_bridge(team_name)
-    on_output = bridge._make_output_handler(name, color=color)
-    session = backend.create_session(
-        name=name, team_name=team_name, prompt=prompt, cwd=cwd, on_output=on_output,
-    )
+    chunk_size = max_chunk_size if (max_chunk_size is not None and max_chunk_size > 0) else None
+    session = None
+    registered = False
 
-    await session.start()
-    await bridge.register(name, session)
-    if not bridge._running:
-        await bridge.start()
+    try:
+        on_output = bridge._make_output_handler(name, color=color, max_chunk_size=chunk_size)
+        session = backend.create_session(
+            name=name,
+            team_name=team_name,
+            prompt=prompt,
+            cwd=cwd,
+            on_output=on_output,
+            command=command,
+            silence_timeout=silence_timeout,
+            prompt_pattern=prompt_pattern,
+            pane_logger=pane_logger,
+            model=model,
+            sandbox=sandbox,
+            full_auto=full_auto,
+        )
+        await session.start()
+        await bridge.register(name, session)
+        registered = True
+        if not bridge._running:
+            await bridge.start()
+    except Exception as exc:
+        if registered:
+            try:
+                await bridge.unregister(name)
+            except Exception:
+                logger.warning("Failed to unregister teammate %s during rollback", name, exc_info=True)
+        elif session is not None and session.is_alive:
+            try:
+                await session.stop()
+            except Exception:
+                logger.warning("Failed to stop teammate %s during rollback", name, exc_info=True)
 
-    return {
+        try:
+            remove_member(_paths, team_name, name)
+        except Exception:
+            logger.warning("Failed to rollback member %s from team %s", name, team_name, exc_info=True)
+
+        try:
+            if inbox_path.exists():
+                inbox_path.unlink()
+        except OSError:
+            logger.warning("Failed to rollback inbox for teammate %s", name, exc_info=True)
+
+        # Clean up tmux pane on rollback
+        if pane_id:
+            kill_pane(pane_id)
+        if pane_logger:
+            pane_logger.close()
+
+        return {"error": f"Failed to start teammate '{name}': {exc}"}
+
+    result = {
         "success": True,
         "name": name,
         "team_name": team_name,
@@ -294,6 +388,9 @@ async def spawn_teammate(
         "color": color,
         "message": f"Teammate '{name}' ({backend_type}) spawned and monitoring inbox.",
     }
+    if pane_id:
+        result["tmux_pane_id"] = pane_id
+    return result
 
 
 @mcp.tool(
@@ -311,6 +408,18 @@ async def spawn_teammate(
 async def stop_teammate(team_name: str, name: str) -> dict:
     assert _paths is not None
 
+    # Security: Validate team_name and name to prevent path traversal
+    try:
+        from anymate.protocol.paths import _validate_safe_name
+        _validate_safe_name(team_name, "team_name")
+        _validate_safe_name(name, "name")
+    except ValueError as e:
+        return {"error": str(e)}
+
+    # Get pane_id before removing member
+    member = get_member(_paths, team_name, name)
+    pane_id = member.get("tmuxPaneId", "") if member else ""
+
     bridge = _bridges.get(team_name)
     if bridge:
         session = bridge.get_session(name)
@@ -318,8 +427,20 @@ async def stop_teammate(team_name: str, name: str) -> dict:
             await bridge.unregister(name)
 
     removed = remove_member(_paths, team_name, name)
+
+    # Kill tmux pane and clean up log file
+    pane_killed = False
+    if pane_id:
+        pane_killed = kill_pane(pane_id)
+    log_file = PaneLogger.log_path(name, team_name)
+    if log_file.exists():
+        log_file.unlink()
+
     if removed:
-        return {"success": True, "message": f"Teammate '{name}' stopped and removed from team.", "removed": removed}
+        result = {"success": True, "message": f"Teammate '{name}' stopped and removed from team.", "removed": removed}
+        if pane_killed:
+            result["pane_killed"] = True
+        return result
     return {"success": False, "message": f"Teammate '{name}' not found in team '{team_name}'."}
 
 
@@ -338,6 +459,14 @@ async def stop_teammate(team_name: str, name: str) -> dict:
 async def check_teammate(team_name: str, name: str) -> dict:
     assert _paths is not None
 
+    # Security: Validate team_name and name to prevent path traversal
+    try:
+        from anymate.protocol.paths import _validate_safe_name
+        _validate_safe_name(team_name, "team_name")
+        _validate_safe_name(name, "name")
+    except ValueError as e:
+        return {"error": str(e)}
+
     member = get_member(_paths, team_name, name)
     if member is None:
         return {"error": f"Teammate '{name}' not found in team '{team_name}'."}
@@ -351,8 +480,10 @@ async def check_teammate(team_name: str, name: str) -> dict:
         "registered": True,
         "process_alive": session.is_alive if session else False,
         "status": session.status.value if session else "not_managed",
-        "backend_type": member.get("backendType", "unknown"),
+        "backend_type": member.get("anymateBackendType") or "unknown",
         "color": member.get("color", ""),
+        "tmux_pane_id": member.get("tmuxPaneId", ""),
+        "has_pane": bool(member.get("tmuxPaneId")),
     }
 
 
@@ -378,7 +509,7 @@ async def list_teammates(team_name: str) -> dict:
         {
             "name": m.get("name"),
             "agent_id": m.get("agentId"),
-            "backend_type": m.get("backendType"),
+            "backend_type": m.get("anymateBackendType") or "unknown",
             "is_active": m.get("isActive", False),
             "color": m.get("color", ""),
         }

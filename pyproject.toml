@@ -2,11 +2,17 @@
 name = "anymate-cc"
 version = "0.1.0"
 description = "Inject external programs as teammates into Claude Code Agent Teams"
-requires-python = ">=3.12"
+readme = "README.md"
+requires-python = ">=3.11"
 license = "MIT"
 dependencies = [
     "filelock>=3.16",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ARCJ137442/anymate-cc"
+Repository = "https://github.com/ARCJ137442/anymate-cc"
+Issues = "https://github.com/ARCJ137442/anymate-cc/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
