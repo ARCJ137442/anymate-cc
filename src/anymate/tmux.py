@@ -21,9 +21,12 @@ def _get_secure_log_dir() -> Path:
     """Get or create a secure directory for tmux logs.
 
     Returns a private directory with restrictive permissions (0o700 on Unix).
-    Falls back to temp directory if private directory cannot be created.
 
-    Security: Fallback path also attempts to use restrictive permissions.
+    Security: Fails fast if secure directory cannot be created, rather than
+    falling back to world-readable temp directory.
+
+    Raises:
+        RuntimeError: If secure log directory cannot be created
     """
     # Try to use ~/.anymate/logs (or ANYMATE_CLAUDE_DIR if set)
     if "ANYMATE_CLAUDE_DIR" in os.environ:
@@ -40,18 +43,22 @@ def _get_secure_log_dir() -> Path:
             log_dir.chmod(0o700)
         return log_dir
     except (OSError, PermissionError) as e:
-        logger.warning("Cannot create secure log directory %s: %s. Falling back to temp.", log_dir, e)
-        # Security: Even in fallback, create a private subdirectory with restrictive permissions
+        # Security: Try private fallback subdirectory in temp
         fallback_dir = Path(tempfile.gettempdir()) / f".anymate-{os.getuid() if hasattr(os, 'getuid') else 'logs'}"
         try:
             fallback_dir.mkdir(parents=True, exist_ok=True)
             if os.name != "nt":
                 fallback_dir.chmod(0o700)
+            logger.warning("Cannot create primary log directory %s: %s. Using fallback: %s", log_dir, e, fallback_dir)
             return fallback_dir
-        except (OSError, PermissionError):
-            # Last resort: use temp directory directly (less secure)
-            logger.error("Cannot create secure fallback directory. Using temp directory without protection.")
-            return Path(tempfile.gettempdir())
+        except (OSError, PermissionError) as e2:
+            # Security: Fail-fast rather than falling back to insecure temp directory
+            # This prevents accidental logging of sensitive data to world-readable locations
+            logger.error("Cannot create secure log directory (tried %s and %s): %s, %s", log_dir, fallback_dir, e, e2)
+            raise RuntimeError(
+                f"Cannot create secure log directory. Tried {log_dir} and {fallback_dir}. "
+                "Set ANYMATE_DISABLE_LOGGING=1 to disable logging entirely."
+            ) from e2
 
 
 def is_tmux_available() -> bool:

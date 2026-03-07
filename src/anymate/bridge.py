@@ -124,7 +124,10 @@ class MessageBridge:
                     # This is an architectural limitation of the file-based IPC design.
                     # Potential mitigations: file owner checks, cryptographic signatures, or
                     # switching to a more secure IPC mechanism (sockets, pipes, etc).
-                    if sender not in valid_members and sender != "team-lead":
+                    #
+                    # Security fix: Remove special treatment for "team-lead" - it must also be
+                    # in the valid members list. This prevents trivial impersonation attacks.
+                    if sender not in valid_members:
                         logger.warning(
                             "Rejecting message from unrecognized sender '%s' to %s (not in team member list)",
                             sender, agent_name
