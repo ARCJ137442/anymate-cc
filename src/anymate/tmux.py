@@ -193,6 +193,22 @@ class PaneLogger:
 
         Security: Logs are stored in a private directory (~/.anymate/logs) with
         restrictive permissions (0o700). Set ANYMATE_DISABLE_LOGGING=1 to disable.
+
+        Defense-in-depth: Validates name and team_name to prevent path traversal,
+        even if caller forgot to validate.
         """
+        # Security: Validate inputs to prevent path traversal
+        from anymate.protocol.paths import _validate_safe_name
+        _validate_safe_name(team_name, "team_name")
+        _validate_safe_name(name, "name")
+
         log_dir = _get_secure_log_dir()
-        return log_dir / f"anymate-{team_name}-{name}.log"
+        log_file = log_dir / f"anymate-{team_name}-{name}.log"
+
+        # Security: Ensure resolved path is still within log_dir
+        try:
+            log_file.resolve().relative_to(log_dir.resolve())
+        except ValueError:
+            raise ValueError(f"Log path escape attempt detected: {log_file}")
+
+        return log_file

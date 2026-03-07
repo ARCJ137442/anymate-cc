@@ -116,6 +116,18 @@ class TestSecureLogging:
         # Should be in a private directory
         assert ".anymate" in str(log_path) or "ANYMATE_CLAUDE_DIR" in os.environ
 
+    def test_log_path_validates_names(self):
+        """Test that PaneLogger.log_path validates name and team_name."""
+        # Test path traversal attempts
+        with pytest.raises(ValueError, match="(invalid characters|path traversal|empty)"):
+            PaneLogger.log_path("../evil", "test-team")
+
+        with pytest.raises(ValueError, match="(invalid characters|path traversal|empty)"):
+            PaneLogger.log_path("test-agent", "../../escape")
+
+        with pytest.raises(ValueError, match="(invalid characters|path traversal|empty)"):
+            PaneLogger.log_path("../../../../secret", "team")
+
     def test_logging_can_be_disabled(self, tmp_path):
         """Test that ANYMATE_DISABLE_LOGGING=1 disables logging."""
         log_file = tmp_path / "test.log"

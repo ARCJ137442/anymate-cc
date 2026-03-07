@@ -408,6 +408,14 @@ async def spawn_teammate(
 async def stop_teammate(team_name: str, name: str) -> dict:
     assert _paths is not None
 
+    # Security: Validate team_name and name to prevent path traversal
+    try:
+        from anymate.protocol.paths import _validate_safe_name
+        _validate_safe_name(team_name, "team_name")
+        _validate_safe_name(name, "name")
+    except ValueError as e:
+        return {"error": str(e)}
+
     # Get pane_id before removing member
     member = get_member(_paths, team_name, name)
     pane_id = member.get("tmuxPaneId", "") if member else ""
@@ -450,6 +458,14 @@ async def stop_teammate(team_name: str, name: str) -> dict:
 )
 async def check_teammate(team_name: str, name: str) -> dict:
     assert _paths is not None
+
+    # Security: Validate team_name and name to prevent path traversal
+    try:
+        from anymate.protocol.paths import _validate_safe_name
+        _validate_safe_name(team_name, "team_name")
+        _validate_safe_name(name, "name")
+    except ValueError as e:
+        return {"error": str(e)}
 
     member = get_member(_paths, team_name, name)
     if member is None:
