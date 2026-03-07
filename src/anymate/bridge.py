@@ -42,9 +42,24 @@ class MessageBridge:
         self._monitors: dict[str, asyncio.Task] = {}
         self._running = False
         self._team_members_cache: set[str] | None = None
+        self._config_mtime: float | None = None
 
     def _get_team_members(self) -> set[str]:
-        """Get set of valid team member names (cached)."""
+        """Get set of valid team member names (cached with mtime invalidation).
+
+        Security: Cache is automatically invalidated when team config file changes.
+        """
+        config_path = self._paths.config_path(self._team_name)
+        try:
+            current_mtime = config_path.stat().st_mtime if config_path.exists() else None
+        except OSError:
+            current_mtime = None
+
+        # Invalidate cache if config file has been modified
+        if current_mtime != self._config_mtime:
+            self._team_members_cache = None
+            self._config_mtime = current_mtime
+
         if self._team_members_cache is None:
             config = read_config(self._paths, self._team_name)
             if config:
@@ -103,6 +118,12 @@ class MessageBridge:
                         continue  # Skip own echo
 
                     # Security: Verify sender is a valid team member
+                    # LIMITATION: This only checks if the sender NAME is in the team member list.
+                    # It does NOT verify sender authenticity - any process that can write to
+                    # the inbox JSON file can impersonate any team member by setting "from" field.
+                    # This is an architectural limitation of the file-based IPC design.
+                    # Potential mitigations: file owner checks, cryptographic signatures, or
+                    # switching to a more secure IPC mechanism (sockets, pipes, etc).
                     if sender not in valid_members and sender != "team-lead":
                         logger.warning(
                             "Rejecting message from unrecognized sender '%s' to %s (not in team member list)",

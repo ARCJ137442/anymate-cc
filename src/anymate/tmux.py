@@ -22,6 +22,8 @@ def _get_secure_log_dir() -> Path:
 
     Returns a private directory with restrictive permissions (0o700 on Unix).
     Falls back to temp directory if private directory cannot be created.
+
+    Security: Fallback path also attempts to use restrictive permissions.
     """
     # Try to use ~/.anymate/logs (or ANYMATE_CLAUDE_DIR if set)
     if "ANYMATE_CLAUDE_DIR" in os.environ:
@@ -39,7 +41,17 @@ def _get_secure_log_dir() -> Path:
         return log_dir
     except (OSError, PermissionError) as e:
         logger.warning("Cannot create secure log directory %s: %s. Falling back to temp.", log_dir, e)
-        return Path(tempfile.gettempdir())
+        # Security: Even in fallback, create a private subdirectory with restrictive permissions
+        fallback_dir = Path(tempfile.gettempdir()) / f".anymate-{os.getuid() if hasattr(os, 'getuid') else 'logs'}"
+        try:
+            fallback_dir.mkdir(parents=True, exist_ok=True)
+            if os.name != "nt":
+                fallback_dir.chmod(0o700)
+            return fallback_dir
+        except (OSError, PermissionError):
+            # Last resort: use temp directory directly (less secure)
+            logger.error("Cannot create secure fallback directory. Using temp directory without protection.")
+            return Path(tempfile.gettempdir())
 
 
 def is_tmux_available() -> bool:

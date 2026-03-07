@@ -253,6 +253,15 @@ async def spawn_teammate(
 ) -> dict:
     assert _paths is not None and _config is not None
 
+    # Security: Validate team_name and name BEFORE any state changes
+    # This prevents path traversal attacks and avoids leaving dirty config on validation failure
+    try:
+        from anymate.protocol.paths import _validate_safe_name
+        _validate_safe_name(team_name, "team_name")
+        _validate_safe_name(name, "name")
+    except ValueError as e:
+        return {"error": str(e)}
+
     config = read_config(_paths, team_name)
     if config is None:
         return {"error": f"Team '{team_name}' does not exist. Create it with Claude Code's TeamCreate first."}
