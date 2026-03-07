@@ -205,7 +205,7 @@ All backends have been integration-tested on Windows (Cygwin/MSYS2):
 
 Run the test suite:
 ```bash
-pytest  # 8 tests passing
+pytest  # 19 passed, 1 xfailed
 ```
 
 ## License

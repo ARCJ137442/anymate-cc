@@ -5,6 +5,19 @@ All notable changes to AnyMate-CC will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Planned for v0.2
+- Cryptographic sender authentication (HMAC or message signing)
+- Or migration to secure IPC mechanism (sockets, named pipes)
+- shutdown_request protocol handling
+- Enhanced team validation
+- CI Windows test matrix
+- Native PowerShell/cmd.exe backend
+- Cross-platform split-window beyond tmux
+
+---
+
 ## [0.1.0] - 2026-03-07
 
 ### Added
@@ -154,18 +167,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Contributors
 - Initial development and security hardening by the AnyMate-CC team
 - Security review and testing assistance from Codex CLI
-
----
-
-## [Unreleased]
-
-### Planned for v0.2
-- Cryptographic sender authentication (HMAC or message signing)
-- Or migration to secure IPC mechanism (sockets, named pipes)
-- shutdown_request protocol handling
-- Enhanced team validation
-- CI Windows test matrix
-- Native PowerShell/cmd.exe backend
-- Cross-platform split-window beyond tmux
 
 [0.1.0]: https://github.com/ARCJ137442/anymate-cc/releases/tag/v0.1.0
