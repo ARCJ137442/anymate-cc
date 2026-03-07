@@ -344,7 +344,8 @@ async def spawn_teammate(
             full_auto=full_auto,
         )
         await session.start()
-        await bridge.register(name, session)
+        await bridge.register(name, session,
+                              handles_protocol_messages=backend.capabilities.handles_protocol_messages)
         registered = True
         if not bridge._running:
             await bridge.start()

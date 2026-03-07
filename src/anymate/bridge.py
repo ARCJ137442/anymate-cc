@@ -1,12 +1,31 @@
 """Message bridge: relay between Claude Code inbox JSON files and external processes."""
 import asyncio
+import json
 import logging
 from .protocol.paths import PathResolver
 from .protocol.messaging import read_unread_messages, send_reply, send_idle_notification
-from .protocol.teams import read_config
+from .protocol.teams import read_config, remove_member, get_member
 from .backends.base import BridgeSession
+from .tmux import kill_pane, PaneLogger
 
 logger = logging.getLogger(__name__)
+
+
+def _is_protocol_message(text: str) -> dict | None:
+    """Try to parse text as a Claude Code protocol message.
+
+    Returns the parsed dict if text is a JSON object with a "type" field,
+    otherwise returns None.
+    """
+    if not text.startswith("{"):
+        return None
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict) and "type" in data:
+            return data
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return None
 
 
 def _split_chunks(text: str, size: int) -> list[str]:
@@ -43,6 +62,7 @@ class MessageBridge:
         self._running = False
         self._team_members_cache: set[str] | None = None
         self._config_mtime: float | None = None
+        self._handles_protocol: dict[str, bool] = {}
 
     def _get_team_members(self) -> set[str]:
         """Get set of valid team member names (cached with mtime invalidation).
@@ -73,8 +93,10 @@ class MessageBridge:
         """Invalidate cached team members (call when team config changes)."""
         self._team_members_cache = None
 
-    async def register(self, agent_name: str, session: BridgeSession) -> None:
+    async def register(self, agent_name: str, session: BridgeSession,
+                       handles_protocol_messages: bool = False) -> None:
         self._sessions[agent_name] = session
+        self._handles_protocol[agent_name] = handles_protocol_messages
         if self._running:
             self._monitors[agent_name] = asyncio.create_task(
                 self._monitor_loop(agent_name, session)
@@ -91,6 +113,7 @@ class MessageBridge:
         if agent_name in self._sessions:
             await self._sessions[agent_name].stop()
             del self._sessions[agent_name]
+        self._handles_protocol.pop(agent_name, None)
 
     async def start(self) -> None:
         self._running = True
@@ -135,15 +158,117 @@ class MessageBridge:
                         continue
 
                     text = msg.get("text", "")
-                    # Skip structured protocol messages (idle, shutdown, etc)
-                    if text.startswith("{") and '"type"' in text:
-                        continue
+
+                    # Check for protocol messages (shutdown_request, etc.)
+                    protocol_msg = _is_protocol_message(text)
+                    if protocol_msg:
+                        handled = await self._handle_protocol_message(
+                            agent_name, protocol_msg, sender, session=session
+                        )
+                        if handled:
+                            continue
+
                     logger.info("Relaying message from %s to %s: %s", sender, agent_name, text[:80])
                     await session.send_message(text, reply_to=sender)
             except Exception as e:
                 logger.warning("Monitor error for %s: %s", agent_name, e)
             await asyncio.sleep(self._poll_interval)
         logger.info("Monitor loop ended for %s", agent_name)
+
+    async def _handle_protocol_message(self, agent_name: str, msg: dict,
+                                       sender: str,
+                                       session: BridgeSession | None = None) -> bool:
+        """Handle a Claude Code protocol message. Returns True if handled.
+
+        Extensible: add new message types by adding elif branches here.
+        """
+        msg_type = msg.get("type")
+
+        if msg_type == "shutdown_request":
+            request_id = msg.get("requestId", "")
+            logger.info(
+                "Received shutdown_request for '%s' from '%s' (requestId=%s)",
+                agent_name, sender, request_id,
+            )
+
+            should_respond = self._handles_protocol.get(agent_name, True)
+
+            # Clean up the teammate (session, tmux pane, log, team config)
+            await self._cleanup_teammate(agent_name, session=session)
+
+            # Send shutdown_response if configured to do so
+            if should_respond:
+                response = {
+                    "type": "shutdown_response",
+                    "requestId": request_id,
+                    "approve": True,
+                    "from": agent_name,
+                }
+                from .protocol.messaging import append_message
+                from .protocol.messaging import now_iso
+                reply_msg = {
+                    "from": agent_name,
+                    "text": json.dumps(response),
+                    "timestamp": now_iso(),
+                    "read": False,
+                    "summary": f"{agent_name} shutdown approved",
+                }
+                append_message(self._paths, self._team_name, sender, reply_msg)
+                logger.info(
+                    "Sent shutdown_response from '%s' to '%s'", agent_name, sender
+                )
+            else:
+                logger.info(
+                    "Skipping shutdown_response for '%s' (handles_protocol_messages=False)",
+                    agent_name,
+                )
+
+            return True
+
+        # Unknown protocol message type - don't forward to backend
+        logger.debug(
+            "Ignoring unhandled protocol message type '%s' for '%s'",
+            msg_type, agent_name,
+        )
+        return True
+
+    async def _cleanup_teammate(self, agent_name: str,
+                                session: BridgeSession | None = None) -> None:
+        """Stop session, kill tmux pane, remove log file, and remove from team config.
+
+        Args:
+            agent_name: Name of the teammate to clean up.
+            session: Optional session reference. Used when the session is not
+                     formally registered (e.g., during direct _monitor_loop calls).
+        """
+        # Get pane_id from team config before removing
+        member = get_member(self._paths, self._team_name, agent_name)
+        pane_id = member.get("tmuxPaneId", "") if member else ""
+
+        # Stop session and cancel monitor (if registered)
+        if agent_name in self._sessions:
+            await self.unregister(agent_name)
+        elif session is not None:
+            # Session was not registered (e.g., test scenario) -- stop it directly
+            await session.stop()
+
+        # Remove from team config
+        remove_member(self._paths, self._team_name, agent_name)
+        self._invalidate_members_cache()
+
+        # Kill tmux pane
+        if pane_id:
+            kill_pane(pane_id)
+
+        # Remove log file
+        try:
+            log_file = PaneLogger.log_path(agent_name, self._team_name)
+            if log_file.exists():
+                log_file.unlink()
+        except Exception as e:
+            logger.warning("Failed to remove log file for '%s': %s", agent_name, e)
+
+        logger.info("Cleaned up teammate '%s' from team '%s'", agent_name, self._team_name)
 
     def _make_output_handler(self, agent_name: str, color: str | None = None,
                              max_chunk_size: int | None = 4096):

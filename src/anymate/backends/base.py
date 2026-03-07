@@ -17,6 +17,7 @@ class BackendCapabilities:
     supports_interrupt: bool = False
     is_conversational: bool = False
     supports_cwd: bool = True
+    handles_protocol_messages: bool = False
 
 OutputCallback = Callable[[str, str], None]  # (output_text, reply_to) -> None
 

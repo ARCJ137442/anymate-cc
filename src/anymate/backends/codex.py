@@ -105,6 +105,7 @@ class CodexBackend(Backend):
             supports_interrupt=True,
             is_conversational=False,
             supports_cwd=True,
+            handles_protocol_messages=True,
         )
 
     def is_available(self) -> bool:
